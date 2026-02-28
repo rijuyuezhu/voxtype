@@ -15,10 +15,12 @@ use tokio::sync::mpsc;
 /// Events emitted by the hotkey listener
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HotkeyEvent {
-    /// The hotkey was pressed, optionally with a model override
+    /// The hotkey was pressed, optionally with a model override and/or complex post-processing override
     Pressed {
         /// Model to use for this transcription (None = use default)
         model_override: Option<String>,
+        /// Whether to enable complex post-processing for this transcription (None = use default behavior)
+        complex_process_override: Option<bool>,
     },
     /// The hotkey was released
     Released,

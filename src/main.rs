@@ -161,6 +161,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(model_modifier) = cli.model_modifier {
         config.hotkey.model_modifier = Some(model_modifier);
     }
+    if let Some(complex_post_process_modifier) = cli.complex_post_process_modifier {
+        config.hotkey.complex_post_process_modifier = Some(complex_post_process_modifier);
+    }
 
     // Whisper overrides
     if let Some(delay) = cli.pre_type_delay {

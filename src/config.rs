@@ -386,6 +386,12 @@ pub struct HotkeyConfig {
     /// Examples: "LEFTSHIFT", "RIGHTALT", "LEFTCTRL"
     #[serde(default)]
     pub model_modifier: Option<String>,
+
+    /// Optional modifier key for complex post-processing enablement (evdev KEY_* name, without KEY_ prefix)
+    /// When held while pressing the hotkey, enables complex post-processing
+    /// Examples: "RIGHTSHIFT", "LEFTCTRL", "RIGHTALT"
+    #[serde(default)]
+    pub complex_post_process_modifier: Option<String>,
 }
 
 /// Audio capture configuration
@@ -1456,6 +1462,8 @@ pub struct PostProcessConfig {
     /// Receives transcribed text on stdin, outputs processed text on stdout
     pub command: String,
 
+    pub complex_command: Option<String>,
+
     /// Timeout in milliseconds (default: 30000 = 30 seconds)
     #[serde(default = "default_post_process_timeout")]
     pub timeout_ms: u64,
@@ -1483,6 +1491,9 @@ pub struct Profile {
     /// Overrides [output.post_process.command] when the profile is active
     #[serde(default)]
     pub post_process_command: Option<String>,
+
+    #[serde(default)]
+    pub post_process_complex_command: Option<String>,
 
     /// Timeout for post-processing in milliseconds (default: 30000)
     #[serde(default)]
@@ -1719,6 +1730,7 @@ impl Default for Config {
                 enabled: true,
                 cancel_key: None,
                 model_modifier: None,
+                complex_post_process_modifier: None,
             },
             audio: AudioConfig {
                 device: "default".to_string(),

@@ -92,8 +92,11 @@ pub struct Cli {
     #[arg(long, value_name = "KEY", help_heading = "Hotkey")]
     pub model_modifier: Option<String>,
 
-    // -- Whisper --
+    /// Modifier key to enable complex post-processing (e.g., RIGHTSHIFT)
+    #[arg(long, value_name = "KEY", help_heading = "Hotkey")]
+    pub complex_post_process_modifier: Option<String>,
 
+    // -- Whisper --
     /// Disable context window optimization for short recordings
     #[arg(long, help_heading = "Whisper")]
     pub no_whisper_context_optimization: bool,
