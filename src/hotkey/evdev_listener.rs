@@ -31,6 +31,8 @@ pub struct EvdevListener {
     model_modifier: Option<Key>,
     /// Secondary model to use when model_modifier is held
     secondary_model: Option<String>,
+    /// Optional complex post-processing modifier key (when held, enable complex post-processing)
+    complex_post_process_modifier: Option<Key>,
     /// Signal to stop the listener task
     stop_signal: Option<oneshot::Sender<()>>,
 }
@@ -60,6 +62,13 @@ impl EvdevListener {
             .map(|k| parse_key_name(k))
             .transpose()?;
 
+        // Parse optional complex post-processing modifier key
+        let complex_post_process_modifier = config
+            .complex_post_process_modifier
+            .as_ref()
+            .map(|k| parse_key_name(k))
+            .transpose()?;
+
         // Verify we can access /dev/input (permission check)
         std::fs::read_dir("/dev/input")
             .map_err(|e| HotkeyError::DeviceAccess(format!("/dev/input: {}", e)))?;
@@ -70,6 +79,7 @@ impl EvdevListener {
             cancel_key,
             model_modifier,
             secondary_model: None, // Set later via set_secondary_model
+            complex_post_process_modifier,
             stop_signal: None,
         })
     }
@@ -92,6 +102,7 @@ impl HotkeyListener for EvdevListener {
         let cancel_key = self.cancel_key;
         let model_modifier = self.model_modifier;
         let secondary_model = self.secondary_model.clone();
+        let complex_post_process_modifier = self.complex_post_process_modifier;
 
         // Spawn the listener task
         tokio::task::spawn_blocking(move || {
@@ -101,6 +112,7 @@ impl HotkeyListener for EvdevListener {
                 cancel_key,
                 model_modifier,
                 secondary_model,
+                complex_post_process_modifier,
                 tx,
                 stop_rx,
             ) {
@@ -366,6 +378,7 @@ fn evdev_listener_loop(
     cancel_key: Option<Key>,
     model_modifier: Option<Key>,
     secondary_model: Option<String>,
+    complex_post_process_modifier: Option<Key>,
     tx: mpsc::Sender<HotkeyEvent>,
     mut stop_rx: oneshot::Receiver<()>,
 ) -> Result<(), HotkeyError> {
@@ -376,6 +389,9 @@ fn evdev_listener_loop(
 
     // Track if model modifier is currently held
     let mut model_modifier_held = false;
+
+    // Track if complex post-process modifier is currently held
+    let mut complex_post_process_modifier_held = false;
 
     // Track if we're currently "pressed" (to handle repeat events)
     let mut is_pressed = false;
@@ -407,6 +423,15 @@ fn evdev_listener_loop(
         }
     }
 
+    if complex_post_process_modifier.is_some() {
+        tracing::info!(
+            "Complex post-process modifier configured: {:?}. Complex post-processing only enabled when held.",
+            complex_post_process_modifier
+        );
+    } else {
+        tracing::info!("No complex post-process modifier configured. Complex post-processing is disabled.");
+    }
+
     loop {
         // Check for stop signal (non-blocking)
         match stop_rx.try_recv() {
@@ -422,6 +447,7 @@ fn evdev_listener_loop(
             // Clear state when devices change
             active_modifiers.clear();
             model_modifier_held = false;
+            complex_post_process_modifier_held = false;
             is_pressed = false;
             manager.handle_device_changes();
         }
@@ -432,6 +458,7 @@ fn evdev_listener_loop(
                 // Devices were removed, clear state
                 active_modifiers.clear();
                 model_modifier_held = false;
+                complex_post_process_modifier_held = false;
                 is_pressed = false;
                 tracing::debug!("Stale devices removed during validation");
             }
@@ -474,6 +501,17 @@ fn evdev_listener_loop(
                 }
             }
 
+            // Track complex post-process modifier state
+            if let Some(ppm) = complex_post_process_modifier {
+                if key == ppm {
+                    match value {
+                        1 => complex_post_process_modifier_held = true,
+                        0 => complex_post_process_modifier_held = false,
+                        _ => {}
+                    }
+                }
+            }
+
             // Check cancel key first (if configured)
             if let Some(cancel) = cancel_key {
                 if key == cancel && value == 1 {
@@ -504,17 +542,30 @@ fn evdev_listener_loop(
                                 None
                             };
 
-                            if model_override.is_some() {
+                            // Determine complex_process_override based on complex_post_process_modifier configuration
+                            // If complex_post_process_modifier is not configured, use None (default behavior)
+                            // If complex_post_process_modifier is configured, use Some(held_state)
+                            let complex_process_override = if complex_post_process_modifier.is_some() {
+                                Some(complex_post_process_modifier_held)
+                            } else {
+                                None // Use default behavior from config
+                            };
+
+                            if model_override.is_some() || complex_process_override.is_some() {
                                 tracing::debug!(
-                                    "Hotkey pressed with model override: {:?}",
-                                    model_override
+                                    "Hotkey pressed with model override: {:?}, complex_post_process: {:?}",
+                                    model_override,
+                                    complex_process_override
                                 );
                             } else {
                                 tracing::debug!("Hotkey pressed");
                             }
 
                             if tx
-                                .blocking_send(HotkeyEvent::Pressed { model_override })
+                                .blocking_send(HotkeyEvent::Pressed {
+                                    model_override,
+                                    complex_process_override,
+                                })
                                 .is_err()
                             {
                                 return Ok(()); // Channel closed

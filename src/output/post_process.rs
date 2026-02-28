@@ -24,6 +24,7 @@ use tokio::time::timeout;
 /// Post-processor that runs an external command on transcribed text
 pub struct PostProcessor {
     command: String,
+    complex_command: Option<String>,
     timeout: Duration,
 }
 
@@ -32,6 +33,7 @@ impl PostProcessor {
     pub fn new(config: &PostProcessConfig) -> Self {
         Self {
             command: config.command.clone(),
+            complex_command: config.complex_command.clone(),
             timeout: Duration::from_millis(config.timeout_ms),
         }
     }
@@ -40,8 +42,8 @@ impl PostProcessor {
     ///
     /// Returns the processed text on success, or the original text on any failure.
     /// This ensures voice-to-text always produces output even when post-processing fails.
-    pub async fn process(&self, text: &str) -> String {
-        match self.execute_command(text).await {
+    pub async fn process(&self, text: &str, complex_process: Option<bool>) -> String {
+        match self.execute_command(text, complex_process).await {
             Ok(processed) => {
                 if processed.is_empty() {
                     tracing::warn!(
@@ -64,10 +66,17 @@ impl PostProcessor {
         }
     }
 
-    async fn execute_command(&self, text: &str) -> Result<String, PostProcessError> {
+    async fn execute_command(&self, text: &str, complex_process: Option<bool>) -> Result<String, PostProcessError> {
+        let use_complex = matches!(complex_process, Some(true)) && self.complex_command.is_some();
+        let command_to_run = if use_complex {
+            self.complex_command.as_ref().unwrap()
+        } else {
+            &self.command
+        };
+        tracing::info!("Executing post-process command: {}", command_to_run);
         // Spawn command via shell for proper parsing of complex commands
         let mut child = Command::new("sh")
-            .args(["-c", &self.command])
+            .args(["-c", command_to_run])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -152,6 +161,7 @@ mod tests {
     fn make_config(command: &str, timeout_ms: u64) -> PostProcessConfig {
         PostProcessConfig {
             command: command.to_string(),
+            complex_command: None,
             timeout_ms,
         }
     }
@@ -160,7 +170,7 @@ mod tests {
     async fn test_simple_passthrough() {
         let config = make_config("cat", 5000);
         let processor = PostProcessor::new(&config);
-        let result = processor.process("hello world").await;
+        let result = processor.process("hello world", None).await;
         assert_eq!(result, "hello world");
     }
 
@@ -168,7 +178,7 @@ mod tests {
     async fn test_sed_transformation() {
         let config = make_config("sed 's/foo/bar/g'", 5000);
         let processor = PostProcessor::new(&config);
-        let result = processor.process("foo bar foo").await;
+        let result = processor.process("foo bar foo", None).await;
         assert_eq!(result, "bar bar bar");
     }
 
@@ -176,7 +186,7 @@ mod tests {
     async fn test_tr_uppercase() {
         let config = make_config("tr '[:lower:]' '[:upper:]'", 5000);
         let processor = PostProcessor::new(&config);
-        let result = processor.process("hello world").await;
+        let result = processor.process("hello world", None).await;
         assert_eq!(result, "HELLO WORLD");
     }
 
@@ -184,7 +194,7 @@ mod tests {
     async fn test_timeout_fallback() {
         let config = make_config("sleep 10", 100); // 100ms timeout
         let processor = PostProcessor::new(&config);
-        let result = processor.process("original text").await;
+        let result = processor.process("original text", None).await;
         assert_eq!(result, "original text"); // Falls back to original
     }
 
@@ -192,7 +202,7 @@ mod tests {
     async fn test_command_failure_fallback() {
         let config = make_config("exit 1", 5000);
         let processor = PostProcessor::new(&config);
-        let result = processor.process("original text").await;
+        let result = processor.process("original text", None).await;
         assert_eq!(result, "original text"); // Falls back to original
     }
 
@@ -201,7 +211,7 @@ mod tests {
         // echo -n outputs nothing, which should trigger fallback
         let config = make_config("echo -n ''", 5000);
         let processor = PostProcessor::new(&config);
-        let result = processor.process("original text").await;
+        let result = processor.process("original text", None).await;
         assert_eq!(result, "original text"); // Falls back to original
     }
 
@@ -209,7 +219,7 @@ mod tests {
     async fn test_command_not_found_fallback() {
         let config = make_config("nonexistent_command_xyz_12345", 5000);
         let processor = PostProcessor::new(&config);
-        let result = processor.process("original text").await;
+        let result = processor.process("original text", None).await;
         assert_eq!(result, "original text"); // Falls back to original
     }
 
@@ -217,7 +227,7 @@ mod tests {
     async fn test_multiline_input() {
         let config = make_config("cat", 5000);
         let processor = PostProcessor::new(&config);
-        let result = processor.process("line one\nline two\nline three").await;
+        let result = processor.process("line one\nline two\nline three", None).await;
         assert_eq!(result, "line one\nline two\nline three");
     }
 
@@ -225,7 +235,7 @@ mod tests {
     async fn test_unicode_handling() {
         let config = make_config("cat", 5000);
         let processor = PostProcessor::new(&config);
-        let result = processor.process("Hello 世界! 🎉").await;
+        let result = processor.process("Hello 世界! 🎉", None).await;
         assert_eq!(result, "Hello 世界! 🎉");
     }
 
@@ -234,7 +244,7 @@ mod tests {
         // Output has trailing newline which should be trimmed
         let config = make_config("echo 'hello'", 5000);
         let processor = PostProcessor::new(&config);
-        let result = processor.process("ignored").await;
+        let result = processor.process("ignored", None).await;
         assert_eq!(result, "hello");
     }
 
@@ -243,7 +253,7 @@ mod tests {
         // Test that complex shell commands work (pipes, quotes, etc.)
         let config = make_config("echo 'prefix:' && cat", 5000);
         let processor = PostProcessor::new(&config);
-        let result = processor.process("test input").await;
+        let result = processor.process("test input", None).await;
         assert_eq!(result, "prefix:\ntest input");
     }
 }
