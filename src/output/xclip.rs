@@ -40,7 +40,7 @@ impl XclipOutput {
         let _ = Command::new("notify-send")
             .args([
                 "--app-name=Voxtype",
-                "--expire-time=3000",
+                "--expire-time=1500",
                 "Copied to clipboard",
                 &preview,
             ])

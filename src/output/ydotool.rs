@@ -86,7 +86,7 @@ impl YdotoolOutput {
         let _ = Command::new("notify-send")
             .args([
                 "--app-name=Voxtype",
-                "--expire-time=3000",
+                "--expire-time=1500",
                 "Transcribed",
                 &preview,
             ])
