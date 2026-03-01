@@ -38,7 +38,7 @@ async fn send_notification(
     };
 
     let _ = Command::new("notify-send")
-        .args(["--app-name=Voxtype", "--expire-time=2000", &title, body])
+        .args(["--app-name=Voxtype", "--expire-time=1500", &title, body])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
