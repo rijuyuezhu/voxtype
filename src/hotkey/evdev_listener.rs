@@ -23,7 +23,7 @@ use tokio::sync::{mpsc, oneshot};
 pub struct EvdevListener {
     /// The key to listen for
     target_key: Key,
-    /// The key to enter edit mode (optional)
+    /// The key to treat as "edit mode" (Optional)
     edit_key: Option<Key>,
     /// Modifier keys that must be held
     modifier_keys: HashSet<Key>,
@@ -33,7 +33,7 @@ pub struct EvdevListener {
     model_modifier: Option<Key>,
     /// Secondary model to use when model_modifier is held
     secondary_model: Option<String>,
-    /// Optional complex post-processing modifier key (when held, enable complex post-processing)
+    /// Optional complex post-processing modifier key (when held, enable complex post-processing command)
     complex_post_process_modifier: Option<Key>,
     /// Signal to stop the listener task
     stop_signal: Option<oneshot::Sender<()>>,
@@ -409,16 +409,18 @@ fn evdev_listener_loop(
 
     if let Some(cancel) = cancel_key {
         tracing::info!(
-            "Listening for {:?} (with modifiers: {:?}) and cancel key {:?} on {} device(s)",
+            "Listening for hotkey {:?} and editkey {:?} (with modifiers: {:?}) and cancel key {:?} on {} device(s)",
             target_key,
+            edit_key,
             modifier_keys,
             cancel,
             manager.devices.len()
         );
     } else {
         tracing::info!(
-            "Listening for {:?} (with modifiers: {:?}) on {} device(s)",
+            "Listening for hotkey {:?} and editkey {:?} (with modifiers: {:?}) on {} device(s)",
             target_key,
+            edit_key,
             modifier_keys,
             manager.devices.len()
         );
@@ -434,13 +436,11 @@ fn evdev_listener_loop(
         }
     }
 
-    if complex_post_process_modifier.is_some() {
+    if let Some(ppm) = complex_post_process_modifier {
         tracing::info!(
-            "Complex post-process modifier configured: {:?}. Complex post-processing only enabled when held.",
-            complex_post_process_modifier
+            "Complex post-process modifier configured: {:?}",
+            ppm
         );
-    } else {
-        tracing::info!("No complex post-process modifier configured. Complex post-processing is disabled.");
     }
 
     loop {
@@ -536,6 +536,8 @@ fn evdev_listener_loop(
             }
             
             let is_target = key == target_key;
+
+            // if edit_key is the same as target_key, we ignore edit_key.
             let is_edit = !is_target && edit_key.map_or(false, |ek| key == ek);
             // Check target key
             if is_target || is_edit {
@@ -556,19 +558,13 @@ fn evdev_listener_loop(
                             };
 
                             // Determine complex_process_override based on complex_post_process_modifier configuration
-                            // If complex_post_process_modifier is not configured, use None (default behavior)
-                            // If complex_post_process_modifier is configured, use Some(held_state)
-                            let complex_process_override = if complex_post_process_modifier.is_some() {
-                                Some(complex_post_process_modifier_held)
-                            } else {
-                                None // Use default behavior from config
-                            };
+                            let use_complex_post_process = complex_post_process_modifier.is_some() && complex_post_process_modifier_held;
 
-                            if model_override.is_some() || complex_process_override.is_some() {
+                            if model_override.is_some() || use_complex_post_process {
                                 tracing::debug!(
-                                    "Hotkey pressed with model override: {:?}, complex_post_process: {:?}",
+                                    "Hotkey pressed with model override: {:?}, use_complex_post_process: {:?}",
                                     model_override,
-                                    complex_process_override
+                                    use_complex_post_process
                                 );
                             } else {
                                 tracing::debug!("Hotkey pressed");
@@ -578,7 +574,7 @@ fn evdev_listener_loop(
                                 .blocking_send(HotkeyEvent::Pressed {
                                     is_edit,
                                     model_override,
-                                    complex_process_override,
+                                    use_complex_post_process,
                                 })
                                 .is_err()
                             {

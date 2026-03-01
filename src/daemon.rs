@@ -9,9 +9,9 @@ use crate::config::{ActivationMode, Config, FileMode, OutputMode};
 use crate::eager::{self, EagerConfig};
 use crate::error::Result;
 use crate::hotkey::{self, HotkeyEvent};
+use crate::input;
 use crate::meeting::{self, MeetingDaemon, MeetingEvent, StorageConfig};
 use crate::model_manager::ModelManager;
-use crate::input;
 use crate::output;
 use crate::output::post_process::PostProcessor;
 use crate::state::{ChunkResult, State};
@@ -1153,17 +1153,17 @@ impl Daemon {
         let duration = state.recording_duration().unwrap_or_default();
         tracing::info!("Recording stopped ({:.1}s)", duration.as_secs_f32());
 
-        // Extract complex_process_override from current state before transitioning
-        let (complex_process_override, edit_content) = match state {
+        // Extract use_complex_post_process and edit_content
+        // from current state before transitioning
+        let (use_complex_post_process, edit_content) = match state {
             State::Recording {
-                complex_process_override,
-                edit_content,
-                .. 
+                use_complex_post_process,
+                edit_content, .. 
             } | State::EagerRecording {
-                complex_process_override,
+                use_complex_post_process,
                 edit_content, ..
-            } => (*complex_process_override, edit_content.clone()),
-            _ => (None, None),
+            } => (*use_complex_post_process, edit_content.clone()),
+            _ => (false, None),
         };
 
         // Play audio feedback
@@ -1223,7 +1223,7 @@ impl Daemon {
                     tracing::info!("Transcribing {:.1}s of audio...", audio_duration);
                     *state = State::Transcribing {
                         audio: samples.clone(),
-                        complex_process_override,
+                        use_complex_post_process,
                         edit_content,
                     };
                     self.update_state("transcribing");
@@ -1301,12 +1301,12 @@ impl Daemon {
                     }
 
                     // Check if complex post-processing should be enabled
-                    // complex_process_override: None = use default behavior from config
-                    // complex_process_override: Some(true) = force enable
-                    // complex_process_override: Some(false) = force disable
-                    let (complex_process_override, edit_content) = match &state {
-                        State::Transcribing { complex_process_override, edit_content, .. } => (*complex_process_override, edit_content.clone()),
-                        _ => (None, None),
+                    let (use_complex_post_process, edit_content) = match &state {
+                        State::Transcribing {
+                            use_complex_post_process,
+                            edit_content, ..
+                        } => (*use_complex_post_process, edit_content.clone()),
+                        _ => (false, None),
                     };
 
                     // Apply post-processing command (profile overrides default)
@@ -1326,14 +1326,14 @@ impl Daemon {
                                 "Post-processing with profile: {:?}",
                                 profile_override.as_ref().unwrap()
                             );
-                            let result = profile_processor.process(&processed_text, complex_process_override, edit_content).await;
+                            let result = profile_processor.process(&processed_text, use_complex_post_process, edit_content).await;
                             tracing::info!("Post-processed: {:?}", result);
                             result
                         } else {
                             // Profile exists but has no post_process_command, use default
                             if let Some(ref post_processor) = self.post_processor {
                                 tracing::info!("Post-processing: {:?}", processed_text);
-                                let result = post_processor.process(&processed_text, complex_process_override, edit_content).await;
+                                let result = post_processor.process(&processed_text, use_complex_post_process, edit_content).await;
                                 tracing::info!("Post-processed: {:?}", result);
                                 result
                             } else {
@@ -1342,7 +1342,7 @@ impl Daemon {
                         }
                     } else if let Some(ref post_processor) = self.post_processor {
                         tracing::info!("Post-processing: {:?}", processed_text);
-                        let result = post_processor.process(&processed_text, complex_process_override, edit_content).await;
+                        let result = post_processor.process(&processed_text, use_complex_post_process, edit_content).await;
                         tracing::info!("Post-processed: {:?}", result);
                         result
                     } else {
@@ -1564,6 +1564,7 @@ impl Daemon {
         // Initialize hotkey listener (if enabled)
         let mut hotkey_listener = if self.config.hotkey.enabled {
             tracing::info!("Hotkey: {}", self.config.hotkey.key);
+            tracing::info!("Edit key: {:?}", self.config.hotkey.edit_key);
             let secondary_model = self.config.whisper.secondary_model.clone();
             Some(hotkey::create_listener(
                 &self.config.hotkey,
@@ -1628,6 +1629,11 @@ impl Daemon {
             }
         }
 
+        // Log complex post-process configuration
+        if let Some(ref pmm) = self.config.hotkey.complex_post_process_modifier {
+            tracing::info!("Complex post-process modifier key: {}", pmm);
+        }
+
         self.model_manager = Some(model_manager);
 
         // Start hotkey listener (if enabled)
@@ -1653,8 +1659,9 @@ impl Daemon {
                 ActivationMode::Toggle => "press to start/stop recording",
             };
             tracing::info!(
-                "Listening for hotkey: {} ({})",
+                "Listening for hotkey: {}, edit_key: {:?} ({})",
                 self.config.hotkey.key,
+                self.config.hotkey.edit_key,
                 mode_desc
             );
         }
@@ -1677,11 +1684,13 @@ impl Daemon {
                 } => {
                     match (hotkey_event, activation_mode) {
                         // === PUSH-TO-TALK MODE ===
-                        (HotkeyEvent::Pressed { is_edit, model_override, complex_process_override }, ActivationMode::PushToTalk) => {
-                            tracing::debug!("Received HotkeyEvent::Pressed (push-to-talk), state.is_idle() = {}, is_edit = {}, model_override = {:?}, complex_process_override = {:?}",
-                                state.is_idle(), is_edit, model_override, complex_process_override);
+                        (HotkeyEvent::Pressed { is_edit, model_override, use_complex_post_process }, ActivationMode::PushToTalk) => {
+                            tracing::debug!("Received HotkeyEvent::Pressed (push-to-talk), state.is_idle() = {}, is_edit = {}, model_override = {:?}, use_complex_post_process = {:?}",
+                                state.is_idle(), is_edit, model_override, use_complex_post_process);
+
                             let engine = if model_override.is_some() { crate::config::TranscriptionEngine::Whisper } else { self.config.engine };
                             let edit_content = if is_edit { Some(self.read_edit_content().await?) } else { None };
+
                             if state.is_idle() {
                                 tracing::info!("Recording started");
 
@@ -1696,11 +1705,10 @@ impl Daemon {
                                     tracing::info!("No model override, using default model from config: {}", self.config.model_name());
                                 }
 
-                                if complex_process_override.is_some() {
-                                    tracing::info!("Post-process modifier configured for this recording: {}", complex_process_override.unwrap());
-                                } else {
-                                    tracing::info!("No post-process modifier override, will use default post-process behavior from config");
+                                if use_complex_post_process {
+                                    tracing::info!("Complex post-process enabled for this recording");
                                 }
+                                
 
                                 if is_edit {
                                     tracing::info!("Edit mode enabled for this recording, will provide context to post-processing command");
@@ -1776,7 +1784,7 @@ impl Daemon {
                                             state = State::EagerRecording {
                                                 started_at: std::time::Instant::now(),
                                                 model_override: model_override.clone(),
-                                                complex_process_override,
+                                                use_complex_post_process,
                                                 edit_content,
                                                 accumulated_audio: Vec::new(),
                                                 chunks_sent: 0,
@@ -1786,8 +1794,8 @@ impl Daemon {
                                         } else {
                                             state = State::Recording {
                                                 started_at: std::time::Instant::now(),
-                                                complex_process_override,
                                                 model_override: model_override.clone(),
+                                                use_complex_post_process,
                                                 edit_content,
                                             };
                                         }
@@ -1831,9 +1839,21 @@ impl Daemon {
                                 ).await;
                             } else if state.is_eager_recording() {
                                 // Handle eager recording stop - extract model_override and complex_process_override first
-                                let (model_override, complex_process_override, edit_content) = match &state {
-                                    State::EagerRecording { model_override, complex_process_override, edit_content, .. } => (model_override.clone(), *complex_process_override, edit_content.clone()),
-                                    _ => (None, None, None),
+                                let (
+                                    model_override,
+                                    use_complex_post_process,
+                                    edit_content,
+                                ) = match &state {
+                                    State::EagerRecording {
+                                        model_override,
+                                        use_complex_post_process,
+                                        edit_content, .. 
+                                    } => (
+                                        model_override.clone(),
+                                        *use_complex_post_process,
+                                        edit_content.clone()
+                                    ),
+                                    _ => (None, false, None),
                                 };
 
                                 let duration = state.recording_duration().unwrap_or_default();
@@ -1873,7 +1893,7 @@ impl Daemon {
                                     // Move to outputting state and handle via transcription result flow
                                     state = State::Transcribing {
                                         audio: Vec::new(),
-                                        complex_process_override,
+                                        use_complex_post_process,
                                         edit_content,
                                     };
                                     self.handle_transcription_result(&mut state, Ok(Ok(text))).await;
@@ -1885,9 +1905,9 @@ impl Daemon {
                         }
 
                         // === TOGGLE MODE ===
-                        (HotkeyEvent::Pressed { model_override, complex_process_override, is_edit }, ActivationMode::Toggle) => {
-                            tracing::debug!("Received HotkeyEvent::Pressed (toggle), state.is_idle() = {}, state.is_recording() = {}, model_override = {:?}, complex_process_override = {:?}, is_edit = {}",
-                                state.is_idle(), state.is_recording(), model_override, complex_process_override, is_edit);
+                        (HotkeyEvent::Pressed { model_override, use_complex_post_process, is_edit }, ActivationMode::Toggle) => {
+                            tracing::debug!("Received HotkeyEvent::Pressed (toggle), state.is_idle() = {}, state.is_recording() = {}, model_override = {:?}, use_complex_post_process = {:?}, is_edit = {}",
+                                state.is_idle(), state.is_recording(), model_override, use_complex_post_process, is_edit);
                             let engine = if model_override.is_some() { crate::config::TranscriptionEngine::Whisper } else { self.config.engine };
                             if state.is_idle() {
                                 // Start recording
@@ -1904,10 +1924,8 @@ impl Daemon {
                                     tracing::info!("No model override, using default model from config: {}", self.config.model_name());
                                 }
 
-                                if complex_process_override.is_some() {
-                                    tracing::info!("Post-process modifier configured for this recording: {}", complex_process_override.unwrap());
-                                } else {
-                                    tracing::info!("No post-process modifier override, will use default post-process behavior from config");
+                                if use_complex_post_process {
+                                    tracing::info!("Complex post-process enabled for this recording");
                                 }
 
                                 if is_edit {
@@ -1981,7 +1999,7 @@ impl Daemon {
                                             state = State::EagerRecording {
                                                 started_at: std::time::Instant::now(),
                                                 model_override: model_override.clone(),
-                                                complex_process_override,
+                                                use_complex_post_process,
                                                 edit_content,
                                                 accumulated_audio: Vec::new(),
                                                 chunks_sent: 0,
@@ -1991,7 +2009,7 @@ impl Daemon {
                                         } else {
                                             state = State::Recording {
                                                 started_at: std::time::Instant::now(),
-                                                complex_process_override,
+                                                use_complex_post_process,
                                                 model_override: model_override.clone(),
                                                 edit_content,
                                             };
@@ -2031,10 +2049,10 @@ impl Daemon {
                                     transcriber,
                                 ).await;
                             } else if state.is_eager_recording() {
-                                // Handle eager recording stop in toggle mode - extract model_override and complex_process_override first
-                                let (model_override, complex_process_override, edit_content) = match &state {
-                                    State::EagerRecording { model_override, complex_process_override, edit_content, .. } => (model_override.clone(), *complex_process_override, edit_content.clone()),
-                                    _ => (None, None, None),
+                                // Handle eager recording stop in toggle mode - extract model_override and use_complex_post_process first
+                                let (model_override, use_complex_post_process, edit_content) = match &state {
+                                    State::EagerRecording { model_override, use_complex_post_process, edit_content, .. } => (model_override.clone(), *use_complex_post_process, edit_content.clone()),
+                                    _ => (None, false, None),
                                 };
 
                                 let duration = state.recording_duration().unwrap_or_default();
@@ -2072,7 +2090,7 @@ impl Daemon {
                                 if let Some(text) = self.finish_eager_recording(&mut state, transcriber).await {
                                     state = State::Transcribing {
                                         audio: Vec::new(),
-                                        complex_process_override,
+                                        use_complex_post_process,
                                         edit_content,
                                     };
                                     self.handle_transcription_result(&mut state, Ok(Ok(text))).await;
@@ -2423,7 +2441,7 @@ impl Daemon {
                                         state = State::EagerRecording {
                                             started_at: std::time::Instant::now(),
                                             model_override: model_override.clone(),
-                                            complex_process_override: None,
+                                            use_complex_post_process: false,
                                             accumulated_audio: Vec::new(),
                                             edit_content: None,
                                             chunks_sent: 0,
@@ -2434,7 +2452,7 @@ impl Daemon {
                                         state = State::Recording {
                                             started_at: std::time::Instant::now(),
                                             model_override: model_override.clone(),
-                                            complex_process_override: None,
+                                            use_complex_post_process: false,
                                             edit_content: None,
                                         };
                                     }
@@ -2480,9 +2498,9 @@ impl Daemon {
                         ).await;
                     } else if state.is_eager_recording() {
                         // Handle eager recording stop via external trigger - extract model_override and complex_process_override first
-                        let (model_override, complex_process_override, edit_content) = match &state {
-                            State::EagerRecording { model_override, complex_process_override, edit_content, .. } => (model_override.clone(), *complex_process_override, edit_content.clone()),
-                            _ => (None, None, None),
+                        let (model_override, use_complex_post_process, edit_content) = match &state {
+                            State::EagerRecording { model_override, use_complex_post_process, edit_content, .. } => (model_override.clone(), *use_complex_post_process, edit_content.clone()),
+                            _ => (None, false, None),
                         };
 
                         let duration = state.recording_duration().unwrap_or_default();
@@ -2519,10 +2537,10 @@ impl Daemon {
 
                         if let Some(text) = self.finish_eager_recording(&mut state, transcriber).await {
                             state = State::Transcribing {
-                                        audio: Vec::new(),
-                                        complex_process_override,
-                                        edit_content,
-                                    };
+                                audio: Vec::new(),
+                                use_complex_post_process,
+                                edit_content,
+                            };
                             self.handle_transcription_result(&mut state, Ok(Ok(text))).await;
                         } else {
                             tracing::debug!("Eager recording produced empty result");

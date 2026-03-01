@@ -3,6 +3,7 @@ pub mod clipboard;
 use crate::error::InputError;
 use clipboard::ClipboardInput;
 
+/// Trait for text input methods, e.g. clipboard, file, etc.
 #[async_trait::async_trait]
 pub trait TextInput: Send + Sync {
     /// Get input text, e.g. from clipboard or other sources
