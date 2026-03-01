@@ -166,7 +166,7 @@ fn create_driver_output(
     is_first: bool,
 ) -> Box<dyn TextOutput> {
     // Only the first driver in the chain should show notifications
-    let show_notification = is_first && config.notification.on_transcription;
+    let show_notification = is_first && config.notification.after_post_process;
 
     match driver {
         OutputDriver::Wtype => Box::new(wtype::WtypeOutput::new(
@@ -274,7 +274,7 @@ pub fn create_output_chain_with_override(
         crate::config::OutputMode::Clipboard => {
             // Only clipboard
             chain.push(Box::new(clipboard::ClipboardOutput::new(
-                config.notification.on_transcription,
+                config.notification.after_post_process,
                 config.append_text.clone(),
             )));
         }
@@ -297,7 +297,7 @@ pub fn create_output_chain_with_override(
                 "Output mode is 'file' but no file_path configured. Falling back to clipboard."
             );
             chain.push(Box::new(clipboard::ClipboardOutput::new(
-                config.notification.on_transcription,
+                config.notification.after_post_process,
                 config.append_text.clone(),
             )));
         }
