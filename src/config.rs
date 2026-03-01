@@ -1433,8 +1433,11 @@ pub struct NotificationConfig {
     pub on_recording_stop: bool,
 
     /// Notify with transcribed text after transcription completes
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub on_transcription: bool,
+
+    #[serde(default = "default_true")]
+    pub after_post_process: bool,
 
     /// Show engine icon in notification title (🦜 for Parakeet, 🗣️ for Whisper)
     #[serde(default)]
@@ -1446,7 +1449,8 @@ impl Default for NotificationConfig {
         Self {
             on_recording_start: false,
             on_recording_stop: false,
-            on_transcription: true,
+            on_transcription: false,
+            after_post_process: true,
             show_engine_icon: false,
         }
     }
@@ -2156,6 +2160,7 @@ mod tests {
             on_recording_start = true
             on_recording_stop = true
             on_transcription = false
+            after_post_process = true
         "#;
 
         let config: Config = toml::from_str(toml_str).unwrap();
@@ -2167,6 +2172,7 @@ mod tests {
         assert!(config.output.notification.on_recording_start);
         assert!(config.output.notification.on_recording_stop);
         assert!(!config.output.notification.on_transcription);
+        assert!(config.output.notification.after_post_process);
     }
 
     #[test]
