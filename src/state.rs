@@ -31,6 +31,8 @@ pub enum State {
         model_override: Option<String>,
         /// Whether to enable complex post-processing (None = use default behavior)
         complex_process_override: Option<bool>,
+        /// The edit content to use for this recording (None = no edit, use original transcription)
+        edit_content: Option<String>,
     },
 
     /// Hotkey held, recording audio with eager chunk processing
@@ -41,6 +43,8 @@ pub enum State {
         model_override: Option<String>,
         /// Whether to enable complex post-processing (None = use default behavior)
         complex_process_override: Option<bool>,
+        /// The edit content to use for this recording (None = no edit, use original transcription)
+        edit_content: Option<String>,
         /// Accumulated audio samples during recording
         accumulated_audio: AudioBuffer,
         /// Number of chunks already sent for transcription
@@ -57,6 +61,8 @@ pub enum State {
         audio: AudioBuffer,
         /// Whether to enable complex post-processing (None = use default behavior)
         complex_process_override: Option<bool>,
+        /// The edit content to use for this transcription (None = no edit, use original transcription)
+        edit_content: Option<String>,
     },
 
     /// Transcription complete, outputting text
@@ -176,6 +182,7 @@ mod tests {
             started_at: Instant::now(),
             model_override: None,
             complex_process_override: None,
+            edit_content: None,
         };
         assert!(state.is_recording());
         assert!(!state.is_idle());
@@ -197,6 +204,7 @@ mod tests {
             started_at: Instant::now(),
             model_override: None,
             complex_process_override: None,
+            edit_content: None,
         };
         assert!(format!("{}", state).starts_with("Recording"));
     }
@@ -211,6 +219,7 @@ mod tests {
             chunks_sent: 2,
             chunk_results: vec![],
             tasks_in_flight: 1,
+            edit_content: None,
         };
         assert!(state.is_recording());
         assert!(state.is_eager_recording());
@@ -226,6 +235,7 @@ mod tests {
             started_at: Instant::now(),
             model_override: None,
             complex_process_override: None,
+            edit_content: None,
         };
         assert!(state.is_recording());
         assert!(!state.is_eager_recording());
@@ -243,6 +253,7 @@ mod tests {
             chunks_sent: 3,
             chunk_results: vec![],
             tasks_in_flight: 2,
+            edit_content: None,
         };
         let display = format!("{}", state);
         assert!(display.contains("Recording"));

@@ -23,6 +23,8 @@ use tokio::sync::{mpsc, oneshot};
 pub struct EvdevListener {
     /// The key to listen for
     target_key: Key,
+    /// The key to enter edit mode (optional)
+    edit_key: Option<Key>,
     /// Modifier keys that must be held
     modifier_keys: HashSet<Key>,
     /// Optional cancel key
@@ -41,6 +43,11 @@ impl EvdevListener {
     /// Create a new evdev listener for the configured hotkey
     pub fn new(config: &HotkeyConfig) -> Result<Self, HotkeyError> {
         let target_key = parse_key_name(&config.key)?;
+        let edit_key = config
+            .edit_key
+            .as_ref()
+            .map(|k| parse_key_name(k))
+            .transpose()?;
 
         let modifier_keys = config
             .modifiers
@@ -75,6 +82,7 @@ impl EvdevListener {
 
         Ok(Self {
             target_key,
+            edit_key,
             modifier_keys,
             cancel_key,
             model_modifier,
@@ -98,6 +106,7 @@ impl HotkeyListener for EvdevListener {
         self.stop_signal = Some(stop_tx);
 
         let target_key = self.target_key;
+        let edit_key = self.edit_key;
         let modifier_keys = self.modifier_keys.clone();
         let cancel_key = self.cancel_key;
         let model_modifier = self.model_modifier;
@@ -108,6 +117,7 @@ impl HotkeyListener for EvdevListener {
         tokio::task::spawn_blocking(move || {
             if let Err(e) = evdev_listener_loop(
                 target_key,
+                edit_key,
                 modifier_keys,
                 cancel_key,
                 model_modifier,
@@ -374,6 +384,7 @@ impl DeviceManager {
 /// Main listener loop running in a blocking task
 fn evdev_listener_loop(
     target_key: Key,
+    edit_key: Option<Key>,
     modifier_keys: HashSet<Key>,
     cancel_key: Option<Key>,
     model_modifier: Option<Key>,
@@ -523,9 +534,11 @@ fn evdev_listener_loop(
                     continue;
                 }
             }
-
+            
+            let is_target = key == target_key;
+            let is_edit = !is_target && edit_key.map_or(false, |ek| key == ek);
             // Check target key
-            if key == target_key {
+            if is_target || is_edit {
                 let modifiers_satisfied =
                     modifier_keys.iter().all(|m| active_modifiers.contains(m));
 
@@ -563,6 +576,7 @@ fn evdev_listener_loop(
 
                             if tx
                                 .blocking_send(HotkeyEvent::Pressed {
+                                    is_edit,
                                     model_override,
                                     complex_process_override,
                                 })

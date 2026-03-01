@@ -20,6 +20,9 @@ pub enum VoxtypeError {
     #[error("Transcription error: {0}")]
     Transcribe(#[from] TranscribeError),
 
+    #[error("Input error: {0}")]
+    Input(#[from] InputError),
+
     #[error("Output error: {0}")]
     Output(#[from] OutputError),
 
@@ -107,6 +110,15 @@ pub enum VadError {
 
     #[error("VAD detection failed: {0}")]
     DetectionFailed(String),
+}
+
+#[derive(Error, Debug)]
+pub enum InputError {
+    #[error("wl-paste not found in PATH. Install wl-clipboard via your package manager.")]
+    WlPasteNotFound,
+
+    #[error("Text extraction failed: {0}")]
+    ExtractionFailed(String),
 }
 
 /// Errors related to text output
