@@ -49,6 +49,9 @@ modifiers = []
 # Example: model_modifier = "LEFTSHIFT"  # Shift+hotkey uses secondary model
 # model_modifier = "LEFTSHIFT"
 
+# Modifier key to enable complex post-processing (evdev input mode only)
+# complex_post_process_modifier = "LEFTCTRL"
+
 [audio]
 # Audio input device ("default" uses system default)
 # List devices with: pactl list sources short
@@ -213,6 +216,7 @@ type_delay_ms = 0
 #
 # [output.post_process]
 # command = "ollama run llama3.2:1b 'Clean up this dictation. Fix grammar, remove filler words. Output only the cleaned text:'"
+# complex_comand = "cat"
 # timeout_ms = 30000  # 30 second timeout (generous for LLM)
 
 [output.notification]
@@ -223,7 +227,9 @@ on_recording_start = false
 on_recording_stop = false
 
 # Show notification with transcribed text after transcription completes
-on_transcription = true
+on_transcription = false
+
+after_post_process = true
 
 # [text]
 # Text processing options (word replacements, spoken punctuation)
