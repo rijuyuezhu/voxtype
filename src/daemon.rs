@@ -458,6 +458,60 @@ fn read_model_override() -> Option<String> {
     }
 }
 
+/// Read and consume the complex post-processing override file
+/// Returns true if complex post-processing should be enabled for this transcription, false otherwise
+fn read_complex_post_process_override() -> bool {
+    let override_file = Config::runtime_dir().join("complex_post_process_override");
+    if !override_file.exists() {
+        return false;
+    }
+
+    let content = match std::fs::read_to_string(&override_file) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("Failed to read complex post-process override file: {}", e);
+            return false;
+        }
+    };
+
+    // Consume the file (delete it after reading)
+    if let Err(e) = std::fs::remove_file(&override_file) {
+        tracing::warn!("Failed to remove complex post-process override file: {}", e);
+    }
+    let enabled = content.trim() == "true";
+    if enabled {
+        tracing::info!("Using complex post-process");
+    }
+    enabled
+}
+
+/// Read and consume the edit mode override file
+/// Returns true if edit mode should be enabled for this transcription, false otherwise
+fn read_edit_mode_override() -> bool {
+    let override_file = Config::runtime_dir().join("edit_mode_override");
+    if !override_file.exists() {
+        return false;
+    }
+
+    let content = match std::fs::read_to_string(&override_file) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("Failed to read edit mode override file: {}", e);
+            return false;
+        }
+    };
+
+    // Consume the file (delete it after reading)
+    if let Err(e) = std::fs::remove_file(&override_file) {
+        tracing::warn!("Failed to remove edit mode override file: {}", e);
+    }
+    let enabled = content.trim() == "true";
+    if enabled {
+        tracing::info!("Using edit mode");
+    }
+    enabled
+}
+
 /// Remove the model override file if it exists (for cleanup on cancel/error)
 fn cleanup_model_override() {
     let override_file = Config::runtime_dir().join("model_override");
@@ -2366,6 +2420,9 @@ impl Daemon {
                     if state.is_idle() {
                         // Read model override from file (set by `voxtype record start --model X`)
                         let model_override = read_model_override();
+                        let use_complex_post_process = read_complex_post_process_override();
+                        let is_edit = read_edit_mode_override();
+                        let edit_content = if is_edit { Some(self.read_edit_content().await?) } else { None };
                         let engine = if model_override.is_some() {
                             crate::config::TranscriptionEngine::Whisper
                         } else {
@@ -2441,9 +2498,9 @@ impl Daemon {
                                         state = State::EagerRecording {
                                             started_at: std::time::Instant::now(),
                                             model_override: model_override.clone(),
-                                            use_complex_post_process: false,
+                                            use_complex_post_process,
                                             accumulated_audio: Vec::new(),
-                                            edit_content: None,
+                                            edit_content,
                                             chunks_sent: 0,
                                             chunk_results: Vec::new(),
                                             tasks_in_flight: 0,
@@ -2452,8 +2509,8 @@ impl Daemon {
                                         state = State::Recording {
                                             started_at: std::time::Instant::now(),
                                             model_override: model_override.clone(),
-                                            use_complex_post_process: false,
-                                            edit_content: None,
+                                            use_complex_post_process,
+                                            edit_content,
                                         };
                                     }
                                     self.update_state("recording");
