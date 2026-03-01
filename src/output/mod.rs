@@ -125,7 +125,7 @@ pub async fn send_transcription_notification(
     let _ = Command::new("notify-send")
         .args([
             "--app-name=Voxtype",
-            "--expire-time=1500",
+            "--expire-time=3000",
             &title,
             &preview,
         ])
