@@ -548,8 +548,9 @@ impl Daemon {
         // Initialize post-processor if configured
         let post_processor = config.output.post_process.as_ref().map(|cfg| {
             tracing::info!(
-                "Post-processing enabled: command={:?}, timeout={}ms",
+                "Post-processing enabled: command={:?}, complex_command={:?}, timeout={}ms",
                 cfg.command,
+                cfg.complex_command,
                 cfg.timeout_ms
             );
             PostProcessor::new(cfg)
