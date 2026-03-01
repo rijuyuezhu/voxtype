@@ -37,9 +37,9 @@ async fn send_notification(
     } else {
         title.to_string()
     };
-
+    let body = body.replace(r"\", r"\\");
     let _ = Command::new("notify-send")
-        .args(["--app-name=Voxtype", "--expire-time=2000", &title, body])
+        .args(["--app-name=Voxtype", "--expire-time=2000", &title, &body])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
