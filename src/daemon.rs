@@ -630,6 +630,11 @@ impl Daemon {
         model_override: Option<&str>,
         transcriber_preloaded: &Option<Arc<dyn Transcriber>>,
     ) -> std::result::Result<Arc<dyn Transcriber>, ()> {
+        let engine = if model_override.is_some() {
+            crate::config::TranscriptionEngine::Whisper
+        } else {
+            self.config.engine
+        };
         if self.config.on_demand_loading() {
             // Wait for background model load task
             if let Some(task) = self.model_load_task.take() {
@@ -656,7 +661,7 @@ impl Daemon {
             }
         } else {
             // Use preloaded transcriber based on engine type
-            match self.config.engine {
+            match engine {
                 crate::config::TranscriptionEngine::Parakeet
                 | crate::config::TranscriptionEngine::Moonshine
                 | crate::config::TranscriptionEngine::SenseVoice
@@ -1658,6 +1663,7 @@ impl Daemon {
                         (HotkeyEvent::Pressed { model_override, complex_process_override }, ActivationMode::PushToTalk) => {
                             tracing::debug!("Received HotkeyEvent::Pressed (push-to-talk), state.is_idle() = {}, model_override = {:?}, complex_process_override = {:?}",
                                 state.is_idle(), model_override, complex_process_override);
+                            let engine = if model_override.is_some() { crate::config::TranscriptionEngine::Whisper } else { self.config.engine };
                             if state.is_idle() {
                                 tracing::info!("Recording started");
 
@@ -1681,7 +1687,7 @@ impl Daemon {
                                 // Prepare model for transcription
                                 if self.config.on_demand_loading() {
                                     // Start model loading in background
-                                    match self.config.engine {
+                                    match engine {
                                         crate::config::TranscriptionEngine::Whisper => {
                                             let config = self.config.whisper.clone();
                                             let config_path = self.config_path.clone();
@@ -1706,7 +1712,7 @@ impl Daemon {
                                     tracing::debug!("Started background model loading");
                                 } else {
                                     // Prepare model (spawns subprocess for gpu_isolation mode)
-                                    match self.config.engine {
+                                    match engine {
                                         crate::config::TranscriptionEngine::Whisper => {
                                             if let Some(ref mut mm) = self.model_manager {
                                                 if let Err(e) = mm.prepare_model(model_override.as_deref()) {
@@ -1857,7 +1863,7 @@ impl Daemon {
                         (HotkeyEvent::Pressed { model_override, complex_process_override }, ActivationMode::Toggle) => {
                             tracing::debug!("Received HotkeyEvent::Pressed (toggle), state.is_idle() = {}, state.is_recording() = {}, model_override = {:?}, complex_process_override = {:?}",
                                 state.is_idle(), state.is_recording(), model_override, complex_process_override);
-
+                            let engine = if model_override.is_some() { crate::config::TranscriptionEngine::Whisper } else { self.config.engine };
                             if state.is_idle() {
                                 // Start recording
                                 tracing::info!("Recording started (toggle mode)");
@@ -1881,7 +1887,7 @@ impl Daemon {
                                 // Prepare model for transcription
                                 if self.config.on_demand_loading() {
                                     // Start model loading in background
-                                    match self.config.engine {
+                                    match engine {
                                         crate::config::TranscriptionEngine::Whisper => {
                                             let config = self.config.whisper.clone();
                                             let config_path = self.config_path.clone();
@@ -1906,7 +1912,7 @@ impl Daemon {
                                     tracing::debug!("Started background model loading");
                                 } else {
                                     // Prepare model (spawns subprocess for gpu_isolation mode)
-                                    match self.config.engine {
+                                    match engine {
                                         crate::config::TranscriptionEngine::Whisper => {
                                             if let Some(ref mut mm) = self.model_manager {
                                                 if let Err(e) = mm.prepare_model(model_override.as_deref()) {
@@ -2309,6 +2315,11 @@ impl Daemon {
                     if state.is_idle() {
                         // Read model override from file (set by `voxtype record start --model X`)
                         let model_override = read_model_override();
+                        let engine = if model_override.is_some() {
+                            crate::config::TranscriptionEngine::Whisper
+                        } else {
+                            self.config.engine
+                        };
                         tracing::info!("Recording started (external trigger), model_override = {:?}", model_override);
 
                         if self.config.output.notification.on_recording_start {
@@ -2318,7 +2329,7 @@ impl Daemon {
                         // Prepare model for transcription
                         if self.config.on_demand_loading() {
                             // Start model loading in background
-                            match self.config.engine {
+                            match engine {
                                 crate::config::TranscriptionEngine::Whisper => {
                                     let config = self.config.whisper.clone();
                                     let config_path = self.config_path.clone();
@@ -2342,7 +2353,7 @@ impl Daemon {
                             }
                         } else {
                             // Prepare model (spawns subprocess for gpu_isolation mode)
-                            match self.config.engine {
+                            match engine {
                                 crate::config::TranscriptionEngine::Whisper => {
                                     if let Some(ref mut mm) = self.model_manager {
                                         if let Err(e) = mm.prepare_model(model_override.as_deref()) {
