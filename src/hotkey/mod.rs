@@ -17,6 +17,8 @@ use tokio::sync::mpsc;
 pub enum HotkeyEvent {
     /// The hotkey was pressed, optionally with a model override and/or complex post-processing override
     Pressed {
+        /// Whether to use edit mode for this recording
+        is_edit: bool,
         /// Model to use for this transcription (None = use default)
         model_override: Option<String>,
         /// Whether to enable complex post-processing for this transcription (None = use default behavior)

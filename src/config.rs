@@ -366,6 +366,10 @@ pub struct HotkeyConfig {
     #[serde(default = "default_hotkey_key")]
     pub key: String,
 
+    /// Optional edit key (evdev KEY_* constant name, without KEY_ prefix)
+    #[serde(default)]
+    pub edit_key: Option<String>,
+
     /// Optional modifier keys that must also be held
     /// Examples: ["LEFTCTRL"], ["LEFTALT", "LEFTSHIFT"]
     #[serde(default)]
@@ -1472,7 +1476,11 @@ pub struct PostProcessConfig {
     /// Receives transcribed text on stdin, outputs processed text on stdout
     pub command: String,
 
+    /// Complex command configuration for advanced use cases
     pub complex_command: Option<String>,
+
+    /// Edit command configuration for interactive editing after transcription
+    pub edit_command: Option<String>,
 
     /// Timeout in milliseconds (default: 30000 = 30 seconds)
     #[serde(default = "default_post_process_timeout")]
@@ -1502,8 +1510,13 @@ pub struct Profile {
     #[serde(default)]
     pub post_process_command: Option<String>,
 
+    /// Complex command for this profile (overrides [output.post_process.complex_command])
     #[serde(default)]
     pub post_process_complex_command: Option<String>,
+
+    /// Edit command for this profile (overrides [output.post_process.edit_command])
+    #[serde(default)]
+    pub post_process_edit_command: Option<String>,
 
     /// Timeout for post-processing in milliseconds (default: 30000)
     #[serde(default)]
@@ -1735,6 +1748,7 @@ impl Default for Config {
         Self {
             hotkey: HotkeyConfig {
                 key: "SCROLLLOCK".to_string(),
+                edit_key: None,
                 modifiers: vec![],
                 mode: ActivationMode::default(),
                 enabled: true,
