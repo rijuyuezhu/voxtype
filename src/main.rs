@@ -155,6 +155,9 @@ async fn main() -> anyhow::Result<()> {
     if cli.no_hotkey {
         config.hotkey.enabled = false;
     }
+    if let Some(edit_key) = cli.edit_key {
+        config.hotkey.edit_key = Some(edit_key);
+    }
     if let Some(cancel_key) = cli.cancel_key {
         config.hotkey.cancel_key = Some(cancel_key);
     }
@@ -1075,6 +1078,7 @@ async fn show_config(config: &config::Config) -> anyhow::Result<()> {
 
     println!("[hotkey]");
     println!("  key = {:?}", config.hotkey.key);
+    println!("  edit_key = {:?}", config.hotkey.edit_key);
     println!("  modifiers = {:?}", config.hotkey.modifiers);
     println!("  mode = {:?}", config.hotkey.mode);
 

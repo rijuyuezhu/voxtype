@@ -15,9 +15,9 @@
 //! the processed text on stdout. On any failure, the original text is used.
 
 use crate::config::PostProcessConfig;
+use std::borrow::Cow;
 use std::process::Stdio;
 use std::time::Duration;
-use std::borrow::Cow;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
@@ -30,7 +30,7 @@ pub struct PostProcessor {
     timeout: Duration,
 }
 
-/// Output format for edit operations, useful for post-processing
+/// Output format for edit operations, used for serializing to json
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct EditInput<'a> {
     pub origin_text: String,
@@ -52,8 +52,13 @@ impl PostProcessor {
     ///
     /// Returns the processed text on success, or the original text on any failure.
     /// This ensures voice-to-text always produces output even when post-processing fails.
-    pub async fn process(&self, text: &str, complex_process: Option<bool>, edit_content: Option<String>) -> String {
-        match self.execute_command(text, complex_process, edit_content).await {
+    pub async fn process(
+        &self,
+        text: &str,
+        use_complex_post_process: bool,
+        edit_content: Option<String>,
+    ) -> String {
+        match self.execute_command(text, use_complex_post_process, edit_content).await {
             Ok(processed) => {
                 if processed.is_empty() {
                     tracing::warn!(
@@ -76,16 +81,24 @@ impl PostProcessor {
         }
     }
 
-    async fn execute_command(&self, text: &str, complex_process: Option<bool>, edit_content: Option<String>) -> Result<String, PostProcessError> {
+    async fn execute_command(
+        &self,
+        text: &str,
+        use_complex_post_process: bool,
+        edit_content: Option<String>,
+    ) -> Result<String, PostProcessError> {
         let is_edit = edit_content.is_some() && self.edit_command.is_some();
-        let use_complex = matches!(complex_process, Some(true)) && self.complex_command.is_some();
+        let use_complex = !is_edit && use_complex_post_process && self.complex_command.is_some();
         let text = if is_edit {
             // For edit operations, we give a json input with edit content and voice txt
             let input = EditInput {
                 origin_text: edit_content.unwrap(),
                 instruction: text,
             };
-            Cow::Owned(serde_json::to_string(&input).map_err(|e| PostProcessError::InvalidUtf8(e.to_string()))?)
+            Cow::Owned(
+                serde_json::to_string(&input)
+                .map_err(|e| PostProcessError::InvalidUtf8(e.to_string()))?
+            )
         } else {
             Cow::Borrowed(text)
         };

@@ -76,6 +76,9 @@ pub struct Cli {
     #[arg(long, value_name = "KEY", help_heading = "Hotkey")]
     pub hotkey: Option<String>,
 
+    #[arg(long, value_name = "KEY", help_heading = "Hotkey")]
+    pub edit_key: Option<String>,
+
     /// Use toggle mode (press to start/stop) instead of push-to-talk (hold to record)
     #[arg(long, help_heading = "Hotkey")]
     pub toggle: bool,

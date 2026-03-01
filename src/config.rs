@@ -30,6 +30,9 @@ state_file = "auto"
 # Use `evtest` to find key names for your keyboard
 key = "SCROLLLOCK"
 
+# Key to hold for edit mode
+# edit_key = "F10"
+
 # Optional modifier keys that must also be held
 # Example: modifiers = ["LEFTCTRL", "LEFTALT"]
 modifiers = []
@@ -1446,6 +1449,7 @@ pub struct NotificationConfig {
     #[serde(default)]
     pub on_transcription: bool,
 
+    /// Notify after post-processing completes (if enabled), with final output text
     #[serde(default = "default_true")]
     pub after_post_process: bool,
 

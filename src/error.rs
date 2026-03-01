@@ -112,6 +112,7 @@ pub enum VadError {
     DetectionFailed(String),
 }
 
+/// Errors related to text input
 #[derive(Error, Debug)]
 pub enum InputError {
     #[error("wl-paste not found in PATH. Install wl-clipboard via your package manager.")]
