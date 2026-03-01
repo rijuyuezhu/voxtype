@@ -431,6 +431,14 @@ pub enum RecordAction {
         /// Disable Shift+Enter newlines for this transcription (overrides config)
         #[arg(long, conflicts_with = "shift_enter_newlines")]
         no_shift_enter_newlines: bool,
+
+        /// Enable complex post-processing for this transcription
+        #[arg(long)]
+        complex_post_process: bool,
+
+        /// Enable edit mode for this transcription
+        #[arg(long)]
+        edit: bool,
     },
     /// Stop recording and transcribe (send SIGUSR2 to daemon)
     Stop {
@@ -489,6 +497,14 @@ pub enum RecordAction {
         /// Disable Shift+Enter newlines for this transcription (overrides config)
         #[arg(long, conflicts_with = "shift_enter_newlines")]
         no_shift_enter_newlines: bool,
+
+        /// Enable complex post-processing for this transcription
+        #[arg(long)]
+        complex_post_process: bool,
+
+        /// Enable edit mode for this transcription
+        #[arg(long)]
+        edit: bool,
     },
     /// Cancel current recording or transcription (discard without output)
     Cancel,
@@ -646,6 +662,24 @@ impl RecordAction {
             RecordAction::Start { model, .. } => model.as_deref(),
             RecordAction::Toggle { model, .. } => model.as_deref(),
             RecordAction::Stop { .. } | RecordAction::Cancel => None,
+        }
+    }
+
+    /// Check if complex post-processing is enabled for this action
+    pub fn complex_post_process(&self) -> bool {
+        match self {
+            RecordAction::Start { complex_post_process, .. } => *complex_post_process,
+            RecordAction::Toggle { complex_post_process, .. } => *complex_post_process,
+            RecordAction::Stop { .. } | RecordAction::Cancel => false,
+        }
+    }
+
+    /// Check if edit mode is enabled for this action
+    pub fn is_edit(&self) -> bool {
+        match self {
+            RecordAction::Start { edit, .. } => *edit,
+            RecordAction::Toggle { edit, .. } => *edit,
+            RecordAction::Stop { .. } | RecordAction::Cancel => false,
         }
     }
 

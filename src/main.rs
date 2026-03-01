@@ -648,6 +648,18 @@ fn send_record_command(
             .map_err(|e| anyhow::anyhow!("Failed to write model override: {}", e))?;
     }
 
+    // Write complex post-process override file if specified (true/false)
+    let complex_post_process = action.complex_post_process();
+    let override_file = config::Config::runtime_dir().join("complex_post_process_override");
+    std::fs::write(&override_file, if complex_post_process { "true" } else { "false" })
+        .map_err(|e| anyhow::anyhow!("Failed to write complex post-process override: {}", e))?;
+
+    // Write edit mode override file if specified (true/false)
+    let is_edit = action.is_edit();
+    let override_file = config::Config::runtime_dir().join("edit_mode_override");
+    std::fs::write(&override_file, if is_edit { "true" } else { "false" })
+        .map_err(|e| anyhow::anyhow!("Failed to write edit mode override: {}", e))?;
+
     // Write profile override file if specified
     if let Some(profile_name) = action.profile() {
         // Validate that the profile exists in config
