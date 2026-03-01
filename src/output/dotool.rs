@@ -67,7 +67,7 @@ impl DotoolOutput {
         } else {
             preview
         };
-
+        let preview = preview.replace(r"\", r"\\");
         let _ = Command::new("notify-send")
             .args([
                 "--app-name=Voxtype",
