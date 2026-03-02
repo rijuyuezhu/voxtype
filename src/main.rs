@@ -758,6 +758,20 @@ fn send_record_command(
     kill(Pid::from_raw(pid), signal)
         .map_err(|e| anyhow::anyhow!("Failed to send signal to daemon: {}", e))?;
 
+    if signal == Signal::SIGUSR2 && action.wait_till_idle() {
+        // Wait until state file shows idle state
+        let state_file = config.resolve_state_file().unwrap(); // Safe to unwrap since we checked earlier
+        loop {
+            let state = std::fs::read_to_string(&state_file)
+                .unwrap_or_else(|_| "unknown".to_string());
+            if state.trim() == "idle" {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+    }
+
     Ok(())
 }
 
