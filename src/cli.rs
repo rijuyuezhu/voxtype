@@ -439,6 +439,7 @@ pub enum RecordAction {
         /// Enable edit mode for this transcription
         #[arg(long)]
         edit: bool,
+
     },
     /// Stop recording and transcribe (send SIGUSR2 to daemon)
     Stop {
@@ -453,6 +454,10 @@ pub enum RecordAction {
         /// Override output mode to paste (clipboard + Ctrl+V)
         #[arg(long, group = "output_mode")]
         paste: bool,
+
+        /// Wait until the daemon is idle before exiting
+        #[arg(long)]
+        wait_till_idle: bool,
     },
     /// Toggle recording state
     Toggle {
@@ -505,6 +510,10 @@ pub enum RecordAction {
         /// Enable edit mode for this transcription
         #[arg(long)]
         edit: bool,
+
+        /// Wait until the daemon is idle before exiting (only applies when toggling from recording to idle)
+        #[arg(long)]
+        wait_till_idle: bool,
     },
     /// Cancel current recording or transcription (discard without output)
     Cancel,
@@ -620,6 +629,7 @@ impl RecordAction {
                 type_mode,
                 clipboard,
                 paste,
+                ..
             } => (*type_mode, *clipboard, *paste, None),
             RecordAction::Toggle {
                 type_mode,
@@ -680,6 +690,14 @@ impl RecordAction {
             RecordAction::Start { edit, .. } => *edit,
             RecordAction::Toggle { edit, .. } => *edit,
             RecordAction::Stop { .. } | RecordAction::Cancel => false,
+        }
+    }
+
+    pub fn wait_till_idle(&self) -> bool {
+        match self {
+            RecordAction::Toggle { wait_till_idle, .. } => *wait_till_idle,
+            RecordAction::Stop { wait_till_idle, .. } => *wait_till_idle,
+            RecordAction::Start { .. } | RecordAction::Cancel => false,
         }
     }
 
