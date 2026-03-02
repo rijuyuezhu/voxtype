@@ -512,6 +512,37 @@ fn read_edit_mode_override() -> bool {
     enabled
 }
 
+/// Read and consume the edit input file override
+fn read_edit_input_file_override() -> Option<Option<String>> {
+    let override_file = Config::runtime_dir().join("edit_input_file_override");
+    if !override_file.exists() {
+        return None;
+    }
+
+    let content = match std::fs::read_to_string(&override_file) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("Failed to read edit input file override: {}", e);
+            return None;
+        }
+    };
+
+    if let Err(e) = std::fs::remove_file(&override_file) {
+        tracing::warn!("Failed to remove edit input file override: {}", e);
+    }
+
+    if content == "clipboard" {
+        tracing::info!("Using edit input file override: clipboard");
+        Some(None)
+    } else {
+        tracing::info!(
+            "Using edit input file override: file ({})",
+            content.trim()
+        );
+        Some(Some(content.trim().to_string()))
+    }
+}
+
 /// Remove the model override file if it exists (for cleanup on cancel/error)
 fn cleanup_model_override() {
     let override_file = Config::runtime_dir().join("model_override");
@@ -1551,8 +1582,9 @@ impl Daemon {
         }
     }
 
-    pub async fn read_edit_content(&self) -> Result<String> {
-        let input_device = input::get_input()?;
+    pub async fn read_edit_content(&self, override_source: Option<Option<String>>) -> Result<String> {
+        let source = override_source.unwrap_or_else(|| self.config.hotkey.edit_input_file.clone());
+        let input_device = input::get_input(source)?;
         Ok(input_device.input().await?)
     }
 
@@ -1743,7 +1775,7 @@ impl Daemon {
                                 state.is_idle(), is_edit, model_override, use_complex_post_process);
 
                             let engine = if model_override.is_some() { crate::config::TranscriptionEngine::Whisper } else { self.config.engine };
-                            let edit_content = if is_edit { Some(self.read_edit_content().await?) } else { None };
+                            let edit_content = if is_edit { Some(self.read_edit_content(None).await?) } else { None };
 
                             if state.is_idle() {
                                 tracing::info!("Recording started");
@@ -1967,7 +1999,7 @@ impl Daemon {
                                 // Start recording
                                 tracing::info!("Recording started (toggle mode)");
 
-                                let edit_content = if is_edit { Some(self.read_edit_content().await?) } else { None };
+                                let edit_content = if is_edit { Some(self.read_edit_content(None).await?) } else { None };
                                 if self.config.output.notification.on_recording_start {
                                     send_notification("Recording Started", "Press hotkey again to stop", self.config.output.notification.show_engine_icon, self.config.engine).await;
                                 }
@@ -2422,7 +2454,8 @@ impl Daemon {
                         let model_override = read_model_override();
                         let use_complex_post_process = read_complex_post_process_override();
                         let is_edit = read_edit_mode_override();
-                        let edit_content = if is_edit { Some(self.read_edit_content().await?) } else { None };
+                        let edit_input_file_override = read_edit_input_file_override();
+                        let edit_content = if is_edit { Some(self.read_edit_content(edit_input_file_override).await?) } else { None };
                         let engine = if model_override.is_some() {
                             crate::config::TranscriptionEngine::Whisper
                         } else {

@@ -76,8 +76,13 @@ pub struct Cli {
     #[arg(long, value_name = "KEY", help_heading = "Hotkey")]
     pub hotkey: Option<String>,
 
+    /// Override edit mode hotkey
     #[arg(long, value_name = "KEY", help_heading = "Hotkey")]
     pub edit_key: Option<String>,
+
+    /// The file used in edit mode. To use clipboard, set --edit-input-file clipboard
+    #[arg(long, value_name = "FILE")]
+    pub edit_input_file: Option<String>,
 
     /// Use toggle mode (press to start/stop) instead of push-to-talk (hold to record)
     #[arg(long, help_heading = "Hotkey")]
@@ -461,6 +466,11 @@ pub enum RecordAction {
         #[arg(long)]
         edit: bool,
 
+        /// The file used in edit mode. Set it to clipboard to use clipboard content as input for edit mode
+        /// If not specified, use daemon config
+        #[arg(long)]
+        edit_input_file: Option<String>,
+
     },
     /// Stop recording and transcribe (send SIGUSR2 to daemon)
     Stop {
@@ -539,6 +549,11 @@ pub enum RecordAction {
         /// Enable edit mode for this transcription
         #[arg(long)]
         edit: bool,
+
+        /// The file used in edit mode. Set it to clipboard to use clipboard content as input for edit mode
+        /// If not specified, use daemon config
+        #[arg(long)]
+        edit_input_file: Option<String>,
 
         /// Wait until the daemon is idle before exiting (only applies when toggling from recording to idle)
         #[arg(long)]
@@ -725,6 +740,18 @@ impl RecordAction {
             RecordAction::Start { edit, .. } => *edit,
             RecordAction::Toggle { edit, .. } => *edit,
             RecordAction::Stop { .. } | RecordAction::Cancel => false,
+        }
+    }
+
+    /// Get the edit input file path if specified (returns Some(path) if --edit-input-file=path;
+    /// None if not specified)
+    pub fn edit_input_file(&self) -> Option<String> {
+        match self {
+            RecordAction::Start { edit_input_file, .. }
+            | RecordAction::Toggle { edit_input_file, .. } => {
+                edit_input_file.clone()
+            }
+            RecordAction::Stop { .. } | RecordAction::Cancel => None,
         }
     }
 

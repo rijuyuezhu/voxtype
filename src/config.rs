@@ -33,6 +33,9 @@ key = "SCROLLLOCK"
 # Key to hold for edit mode
 # edit_key = "F10"
 
+# Optional input file for edit mode (if not specified, uses clipboard)
+# edit_input_file = "/tmp/voxtype_edit_input.txt"
+
 # Optional modifier keys that must also be held
 # Example: modifiers = ["LEFTCTRL", "LEFTALT"]
 modifiers = []
@@ -383,6 +386,10 @@ pub struct HotkeyConfig {
     /// Optional edit key (evdev KEY_* constant name, without KEY_ prefix)
     #[serde(default)]
     pub edit_key: Option<String>,
+
+    /// Optional input file for edit mode (if not speified, uses clipboard)
+    #[serde(default)]
+    pub edit_input_file: Option<String>,
 
     /// Optional modifier keys that must also be held
     /// Examples: ["LEFTCTRL"], ["LEFTALT", "LEFTSHIFT"]
@@ -1779,6 +1786,7 @@ impl Default for Config {
             hotkey: HotkeyConfig {
                 key: "SCROLLLOCK".to_string(),
                 edit_key: None,
+                edit_input_file: None,
                 modifiers: vec![],
                 mode: ActivationMode::default(),
                 enabled: true,
