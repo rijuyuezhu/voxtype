@@ -158,6 +158,13 @@ async fn main() -> anyhow::Result<()> {
     if let Some(edit_key) = cli.edit_key {
         config.hotkey.edit_key = Some(edit_key);
     }
+    if let Some(edit_input_file) = cli.edit_input_file {
+        if edit_input_file == "clipboard" {
+            config.hotkey.edit_input_file = None; // Signal to use clipboard
+        } else {
+            config.hotkey.edit_input_file = Some(edit_input_file);
+        }
+    }
     if let Some(cancel_key) = cli.cancel_key {
         config.hotkey.cancel_key = Some(cancel_key);
     }
@@ -659,6 +666,14 @@ fn send_record_command(
     let override_file = config::Config::runtime_dir().join("edit_mode_override");
     std::fs::write(&override_file, if is_edit { "true" } else { "false" })
         .map_err(|e| anyhow::anyhow!("Failed to write edit mode override: {}", e))?;
+
+    // Write edit input file override if specified (defaults to empty string which signals to use clipboard)
+    let edit_input_file = action.edit_input_file();
+    if let Some(input_file) = edit_input_file {
+        let override_file = config::Config::runtime_dir().join("edit_input_file_override");
+        std::fs::write(&override_file, input_file)
+            .map_err(|e| anyhow::anyhow!("Failed to write edit input file override: {}", e))?;
+    }
 
     // Write profile override file if specified
     if let Some(profile_name) = action.profile() {
