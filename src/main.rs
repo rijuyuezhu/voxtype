@@ -591,6 +591,7 @@ fn send_record_command(
 ) -> anyhow::Result<()> {
     use nix::sys::signal::{kill, Signal};
     use nix::unistd::Pid;
+    use pidlock::{Pidlock, PidlockError};
     use voxtype::OutputModeOverride;
 
     // Read PID from the pid file
@@ -627,6 +628,27 @@ fn send_record_command(
         return Ok(());
     }
 
+    // Check if another recording instance (not including cancel) is already running; if so, wait till it's done before sending the new command
+    let lock_path = config::Config::runtime_dir().join("voxtype_record.lock");
+    let lock_path_str = lock_path.to_string_lossy().to_string();
+    let mut pidlock = Pidlock::new(&lock_path_str);
+
+    loop {
+        match pidlock.acquire() {
+            Ok(_) => {
+                tracing::debug!("Acquired PID lock at {:?}", lock_path);
+                break;
+            }
+            Err(PidlockError::LockExists) => {
+                tracing::info!("Another voxtype instance is currently running, waiting for it to finish...");
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => {
+                tracing::error!("Failed to acquire lock: {:?}", e);
+                return Err(anyhow::anyhow!("Failed to acquire lock: {:?}", e));
+            }
+        }
+    }
 
 
     let is_start = matches!(action, RecordAction::Start { .. });
