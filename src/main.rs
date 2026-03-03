@@ -934,19 +934,24 @@ struct ExtendedStatusInfo {
 
 impl ExtendedStatusInfo {
     fn from_config(config: &config::Config) -> Self {
-        let backend = setup::gpu::detect_current_backend()
-            .map(|b| match b {
+        // Try Whisper backend detection first, then fall back to ONNX backend detection
+        let backend = if let Some(b) = setup::gpu::detect_current_backend() {
+            match b {
                 setup::gpu::Backend::Cpu => "CPU (legacy)",
                 setup::gpu::Backend::Native => "CPU (native)",
                 setup::gpu::Backend::Avx2 => "CPU (AVX2)",
                 setup::gpu::Backend::Avx512 => "CPU (AVX-512)",
                 setup::gpu::Backend::Vulkan => "GPU (Vulkan)",
-            })
-            .unwrap_or("unknown")
-            .to_string();
+            }
+            .to_string()
+        } else if let Some(pb) = setup::parakeet::detect_current_parakeet_backend() {
+            pb.display_name().to_string()
+        } else {
+            "unknown".to_string()
+        };
 
         Self {
-            model: config.whisper.model.clone(),
+            model: config.model_name().to_string(),
             device: config.audio.device.clone(),
             backend,
         }
@@ -1400,7 +1405,7 @@ fn reset_sigpipe() {
 
 /// Run a meeting command
 async fn run_meeting_command(config: &config::Config, action: MeetingAction) -> anyhow::Result<()> {
-    use meeting::{ExportFormat, ExportOptions, MeetingConfig, StorageConfig};
+    use meeting::{export_meeting, ExportFormat, ExportOptions, MeetingConfig, StorageConfig};
 
     // Convert config to meeting config
     let storage_path = if config.meeting.storage_path == "auto" {
@@ -1613,24 +1618,40 @@ async fn run_meeting_command(config: &config::Config, action: MeetingAction) -> 
                 line_width: 0,
             };
 
-            match meeting::export_meeting_by_id(
-                &meeting_config,
-                &meeting_id,
-                export_format,
-                &options,
-            ) {
-                Ok(content) => {
-                    if let Some(path) = output {
-                        std::fs::write(&path, &content)?;
-                        println!("Exported to {:?}", path);
-                    } else {
-                        println!("{}", content);
-                    }
+            let meeting_data = match meeting::get_meeting(&meeting_config, &meeting_id) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("Error loading meeting: {}", e);
+                    std::process::exit(1);
                 }
+            };
+
+            let content = match export_meeting(&meeting_data, export_format, &options) {
+                Ok(c) => c,
                 Err(e) => {
                     eprintln!("Error exporting meeting: {}", e);
                     std::process::exit(1);
                 }
+            };
+
+            if let Some(path) = output {
+                let file_path = if path.is_dir() {
+                    let title = meeting_data.metadata.display_title();
+                    let safe_title =
+                        title.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "-");
+                    let basename = if safe_title.trim().is_empty() {
+                        format!("meeting-{}", meeting_data.metadata.id)
+                    } else {
+                        safe_title
+                    };
+                    path.join(format!("{}.{}", basename, export_format.extension()))
+                } else {
+                    path
+                };
+                std::fs::write(&file_path, &content)?;
+                println!("Exported to {}", file_path.display());
+            } else {
+                println!("{}", content);
             }
         }
 
