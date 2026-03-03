@@ -1625,8 +1625,20 @@ impl Daemon {
 
         // Check if another instance is already running (single-instance safeguard)
         let lock_path = Config::runtime_dir().join("voxtype.lock");
+
+        if let Some(parent) = lock_path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                tracing::warn!("Failed to create lock file directory: {}", e);
+                return Err(crate::error::VoxtypeError::Config(format!(
+                    "Failed to create lock file directory: {}",
+                    e
+                )));
+            }
+        }
+
         let lock_path_str = lock_path.to_string_lossy().to_string();
         let mut pidlock = Pidlock::new(&lock_path_str);
+
 
         match pidlock.acquire() {
             Ok(_) => {
