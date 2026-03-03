@@ -627,6 +627,25 @@ fn send_record_command(
         return Ok(());
     }
 
+
+
+    let is_start = matches!(action, RecordAction::Start { .. });
+    let is_stop = matches!(action, RecordAction::Stop { .. });
+
+    if is_start && action.wait_till_idle() {
+        // Wait until state file shows idle state
+        let state_file = config.resolve_state_file().unwrap(); // Safe to unwrap since we checked earlier
+        loop {
+            let state = std::fs::read_to_string(&state_file)
+                .unwrap_or_else(|_| "unknown".to_string());
+            if state.trim() == "idle" {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
+
     // Write output mode override file if specified
     // For file mode, format is "file" or "file:/path/to/file"
     if let Some(mode_override) = action.output_mode_override() {
@@ -757,7 +776,7 @@ fn send_record_command(
     kill(Pid::from_raw(pid), signal)
         .map_err(|e| anyhow::anyhow!("Failed to send signal to daemon: {}", e))?;
 
-    if signal == Signal::SIGUSR2 && action.wait_till_idle() {
+    if is_stop && action.wait_till_idle() {
         // Wait until state file shows idle state
         let state_file = config.resolve_state_file().unwrap(); // Safe to unwrap since we checked earlier
         loop {
