@@ -458,6 +458,12 @@ fn read_model_override() -> Option<String> {
     }
 }
 
+/// Remove the model override file if it exists (for cleanup on cancel/error)
+fn cleanup_model_override() {
+    let override_file = Config::runtime_dir().join("model_override");
+    let _ = std::fs::remove_file(&override_file);
+}
+
 /// Read and consume the complex post-processing override file
 /// Returns true if complex post-processing should be enabled for this transcription, false otherwise
 fn read_complex_post_process_override() -> bool {
@@ -485,6 +491,12 @@ fn read_complex_post_process_override() -> bool {
     enabled
 }
 
+/// Clean up the complex post-processing override file (for cleanup on cancel/error)
+fn cleanup_complex_post_process_override() {
+    let override_file = Config::runtime_dir().join("complex_post_process_override");
+    let _ = std::fs::remove_file(&override_file);
+}
+
 /// Read and consume the edit mode override file
 /// Returns true if edit mode should be enabled for this transcription, false otherwise
 fn read_edit_mode_override() -> bool {
@@ -510,6 +522,12 @@ fn read_edit_mode_override() -> bool {
         tracing::info!("Using edit mode");
     }
     enabled
+}
+
+/// Clean up the edit mode override file (for cleanup on cancel/error)
+fn cleanup_edit_mode_override() {
+    let override_file = Config::runtime_dir().join("edit_mode_override");
+    let _ = std::fs::remove_file(&override_file);
 }
 
 /// Read and consume the edit input file override
@@ -543,10 +561,21 @@ fn read_edit_input_file_override() -> Option<Option<String>> {
     }
 }
 
-/// Remove the model override file if it exists (for cleanup on cancel/error)
-fn cleanup_model_override() {
-    let override_file = Config::runtime_dir().join("model_override");
+/// Clean up the edit input file override (for cleanup on cancel/error)
+fn cleanup_edit_input_file_override() {
+    let override_file = Config::runtime_dir().join("edit_input_file_override");
     let _ = std::fs::remove_file(&override_file);
+}
+
+fn cleanup_all_overrides() {
+    cleanup_output_mode_override();
+    cleanup_profile_override();
+    cleanup_bool_override("auto_submit");
+    cleanup_bool_override("shift_enter");
+    cleanup_model_override();
+    cleanup_complex_post_process_override();
+    cleanup_edit_mode_override();
+    cleanup_edit_input_file_override();
 }
 
 /// Result type for transcription task
@@ -1003,11 +1032,7 @@ impl Daemon {
     /// Reset state to idle and run post_output_command to reset compositor submap
     /// Call this when exiting from recording/transcribing without normal output flow
     async fn reset_to_idle(&self, state: &mut State) {
-        cleanup_output_mode_override();
-        cleanup_model_override();
-        cleanup_profile_override();
-        cleanup_bool_override("auto_submit");
-        cleanup_bool_override("shift_enter");
+        cleanup_all_overrides();
         *state = State::Idle;
         self.update_state("idle");
 
@@ -1738,10 +1763,10 @@ impl Daemon {
                             tracing::debug!("Received HotkeyEvent::Pressed (push-to-talk), state.is_idle() = {}, is_edit = {}, model_override = {:?}, use_complex_post_process = {:?}",
                                 state.is_idle(), is_edit, model_override, use_complex_post_process);
 
-                            let engine = if model_override.is_some() { crate::config::TranscriptionEngine::Whisper } else { self.config.engine };
-                            let edit_content = if is_edit { Some(self.read_edit_content(None).await?) } else { None };
-
                             if state.is_idle() {
+                                let engine = if model_override.is_some() { crate::config::TranscriptionEngine::Whisper } else { self.config.engine };
+                                let edit_content = if is_edit { Some(self.read_edit_content(None).await?) } else { None };
+
                                 tracing::info!("Recording started");
 
                                 // Send notification if enabled
@@ -1958,8 +1983,8 @@ impl Daemon {
                         (HotkeyEvent::Pressed { model_override, use_complex_post_process, is_edit }, ActivationMode::Toggle) => {
                             tracing::debug!("Received HotkeyEvent::Pressed (toggle), state.is_idle() = {}, state.is_recording() = {}, model_override = {:?}, use_complex_post_process = {:?}, is_edit = {}",
                                 state.is_idle(), state.is_recording(), model_override, use_complex_post_process, is_edit);
-                            let engine = if model_override.is_some() { crate::config::TranscriptionEngine::Whisper } else { self.config.engine };
                             if state.is_idle() {
+                                let engine = if model_override.is_some() { crate::config::TranscriptionEngine::Whisper } else { self.config.engine };
                                 // Start recording
                                 tracing::info!("Recording started (toggle mode)");
 
@@ -2178,9 +2203,7 @@ impl Daemon {
                                     task.abort();
                                 }
 
-                                cleanup_output_mode_override();
-                                cleanup_model_override();
-                                cleanup_profile_override();
+                                cleanup_all_overrides();
                                 state = State::Idle;
                                 self.update_state("idle");
                                 self.play_feedback(SoundEvent::Cancelled);
@@ -2203,9 +2226,7 @@ impl Daemon {
                                     task.abort();
                                 }
 
-                                cleanup_output_mode_override();
-                                cleanup_model_override();
-                                cleanup_profile_override();
+                                cleanup_all_overrides();
                                 state = State::Idle;
                                 self.update_state("idle");
                                 self.play_feedback(SoundEvent::Cancelled);
@@ -2248,9 +2269,7 @@ impl Daemon {
                             task.abort();
                         }
 
-                        cleanup_output_mode_override();
-                        cleanup_model_override();
-                        cleanup_profile_override();
+                        cleanup_all_overrides();
                         state = State::Idle;
                         self.update_state("idle");
                         self.play_feedback(SoundEvent::Cancelled);
@@ -2282,9 +2301,7 @@ impl Daemon {
                                 task.abort();
                             }
 
-                            cleanup_output_mode_override();
-                            cleanup_model_override();
-                            cleanup_profile_override();
+                            cleanup_all_overrides();
 
                             // Get model override from state before transitioning
                             let model_override = match &state {
@@ -2530,9 +2547,7 @@ impl Daemon {
                             task.abort();
                         }
 
-                        cleanup_output_mode_override();
-                        cleanup_model_override();
-                        cleanup_profile_override();
+                        cleanup_all_overrides();
                         state = State::Idle;
                         self.update_state("idle");
                         self.play_feedback(SoundEvent::Cancelled);
