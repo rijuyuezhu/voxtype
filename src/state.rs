@@ -63,6 +63,10 @@ pub enum State {
         use_complex_post_process: bool,
         /// The edit content to use for this transcription (None = no edit, use original transcription)
         edit_content: Option<String>,
+        /// Whether smart auto-submit triggered for this transcription cycle
+        smart_submit: bool,
+        /// Optional model override for this transcription (temporarily store here)
+        profile_override: Option<String>,
     },
 
     /// Transcription complete, outputting text

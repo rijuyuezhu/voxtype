@@ -590,7 +590,7 @@ pub struct Daemon {
     pid_file_path: Option<PathBuf>,
     audio_feedback: Option<AudioFeedback>,
     text_processor: TextProcessor,
-    post_processor: Option<PostProcessor>,
+    post_processor: Option<Arc<PostProcessor>>,
     // Model manager for multi-model support
     model_manager: Option<ModelManager>,
     // Background task for loading model on-demand
@@ -601,6 +601,8 @@ pub struct Daemon {
     >,
     // Background task for transcription (allows cancel during transcription)
     transcription_task: Option<tokio::task::JoinHandle<TranscriptionResult>>,
+    // Background task for post-processing (allows cancel during post-processing)
+    post_process_task: Option<tokio::task::JoinHandle<String>>,
     // Background tasks for eager chunk transcriptions (chunk_index, task)
     eager_chunk_tasks: Vec<(
         usize,
@@ -670,7 +672,7 @@ impl Daemon {
                 cfg.edit_command,
                 cfg.timeout_ms
             );
-            PostProcessor::new(cfg)
+            Arc::new(PostProcessor::new(cfg))
         });
 
         // Initialize Voice Activity Detection if enabled
@@ -709,6 +711,7 @@ impl Daemon {
             model_manager: None,
             model_load_task: None,
             transcription_task: None,
+            post_process_task: None,
             eager_chunk_tasks: Vec::new(),
             vad,
             meeting_daemon: None,
@@ -1335,6 +1338,8 @@ impl Daemon {
                         audio: samples.clone(),
                         use_complex_post_process,
                         edit_content,
+                        smart_submit: false,
+                        profile_override: None,
                     };
                     self.update_state("transcribing");
 
@@ -1362,9 +1367,9 @@ impl Daemon {
         }
     }
 
-    /// Handle transcription completion (called when transcription_task completes)
-    async fn handle_transcription_result(
-        &self,
+    /// Start post process (called when transcription_task completes)
+    async fn start_post_process_transcription_result(
+        &mut self,
         state: &mut State,
         result: std::result::Result<TranscriptionResult, tokio::task::JoinError>,
     ) {
@@ -1399,7 +1404,7 @@ impl Daemon {
                     let profile_override = read_profile_override();
                     let active_profile = profile_override
                         .as_ref()
-                        .and_then(|name| self.config.get_profile(name));
+                        .and_then(|name| self.config.get_profile(name).cloned());
 
                     if let Some(profile_name) = &profile_override {
                         if active_profile.is_none() {
@@ -1419,176 +1424,60 @@ impl Daemon {
                         _ => (false, None),
                     };
 
+                    if let State::Transcribing {
+                        profile_override: po,
+                        smart_submit: state_smart_submit,
+                        ..
+                    } = state
+                    {
+                        *po = profile_override.clone();
+                        *state_smart_submit = smart_submit;
+                    } else {
+                        panic!("Expected state to be Transcribing when starting post-process");
+                    }
+
                     // Apply post-processing command (profile overrides default)
-                    let final_text = if let Some(profile) = active_profile {
-                        if let Some(ref cmd) = profile.post_process_command {
-                            let timeout_ms = profile.post_process_timeout_ms.unwrap_or(30000);
-                            let complex_command = profile.post_process_complex_command.clone();
-                            let edit_command = profile.post_process_edit_command.clone();
-                            let profile_config = crate::config::PostProcessConfig {
-                                command: cmd.clone(),
-                                complex_command,
-                                edit_command,
-                                timeout_ms,
-                            };
-                            let profile_processor = PostProcessor::new(&profile_config);
-                            tracing::info!(
-                                "Post-processing with profile: {:?}",
-                                profile_override.as_ref().unwrap()
-                            );
-                            let result = profile_processor.process(&processed_text, use_complex_post_process, edit_content).await;
-                            tracing::info!("Post-processed: {:?}", result);
-                            result
-                        } else {
-                            // Profile exists but has no post_process_command, use default
-                            if let Some(ref post_processor) = self.post_processor {
-                                tracing::info!("Post-processing: {:?}", processed_text);
-                                let result = post_processor.process(&processed_text, use_complex_post_process, edit_content).await;
+                    let default_post_processor = self.post_processor.clone();
+                    self.post_process_task = Some(tokio::spawn(async move {
+                        if let Some(ref profile) = active_profile {
+                            if let Some(ref cmd) = profile.post_process_command {
+                                let timeout_ms = profile.post_process_timeout_ms.unwrap_or(30000);
+                                let complex_command = profile.post_process_complex_command.clone();
+                                let edit_command = profile.post_process_edit_command.clone();
+                                let profile_config = crate::config::PostProcessConfig {
+                                    command: cmd.clone(),
+                                    complex_command,
+                                    edit_command,
+                                    timeout_ms,
+                                };
+                                let profile_processor = PostProcessor::new(&profile_config);
+                                tracing::info!(
+                                    "Post-processing with profile: {:?}",
+                                    profile_override.as_ref().unwrap()
+                                );
+                                let result = profile_processor.process(&processed_text, use_complex_post_process, edit_content).await;
                                 tracing::info!("Post-processed: {:?}", result);
                                 result
                             } else {
-                                processed_text
+                                // Profile exists but has no post_process_command, use default
+                                if let Some(ref post_processor) = default_post_processor {
+                                    tracing::info!("Post-processing: {:?}", processed_text);
+                                    let result = post_processor.process(&processed_text, use_complex_post_process, edit_content).await;
+                                    tracing::info!("Post-processed: {:?}", result);
+                                    result
+                                } else {
+                                    processed_text
+                                }
                             }
+                        } else if let Some(ref post_processor) = default_post_processor {
+                            tracing::info!("Post-processing: {:?}", processed_text);
+                            let result = post_processor.process(&processed_text, use_complex_post_process, edit_content).await;
+                            tracing::info!("Post-processed: {:?}", result);
+                            result
+                        } else {
+                            processed_text
                         }
-                    } else if let Some(ref post_processor) = self.post_processor {
-                        tracing::info!("Post-processing: {:?}", processed_text);
-                        let result = post_processor.process(&processed_text, use_complex_post_process, edit_content).await;
-                        tracing::info!("Post-processed: {:?}", result);
-                        result
-                    } else {
-                        processed_text
-                    };
-
-                    if smart_submit {
-                        tracing::debug!(
-                            "Smart auto-submit: final text after post-processing: {:?}",
-                            final_text
-                        );
-                    }
-
-                    // Check for output mode override from CLI flags
-                    let output_override = read_output_mode_override();
-
-                    // Check if profile specifies output mode override
-                    let profile_output_mode = active_profile.and_then(|p| p.output_mode.clone());
-
-                    // Determine file output path (if file mode)
-                    // Priority: 1. CLI --file=path, 2. CLI --file (config path), 3. profile output_mode, 4. config mode=file
-                    let file_output_path: Option<PathBuf> = match &output_override {
-                        Some(OutputOverride::FileWithPath(path)) => {
-                            // CLI --file=path.txt
-                            Some(path.clone())
-                        }
-                        Some(OutputOverride::Mode(OutputMode::File)) => {
-                            // CLI --file (no path) - use config's file_path
-                            self.config.output.file_path.clone()
-                        }
-                        None if profile_output_mode == Some(OutputMode::File) => {
-                            // Profile specifies file mode
-                            self.config.output.file_path.clone()
-                        }
-                        None if self.config.output.mode == OutputMode::File => {
-                            // Config mode = "file" (no CLI override)
-                            self.config.output.file_path.clone()
-                        }
-                        _ => None,
-                    };
-
-                    if let Some(output_path) = file_output_path {
-                        *state = State::Outputting {
-                            text: final_text.clone(),
-                        };
-
-                        let file_mode = &self.config.output.file_mode;
-                        match write_transcription_to_file(&output_path, &final_text, file_mode)
-                            .await
-                        {
-                            Ok(()) => {
-                                let mode_str = match file_mode {
-                                    FileMode::Overwrite => "wrote",
-                                    FileMode::Append => "appended",
-                                };
-                                tracing::info!("{} transcription to {:?}", mode_str, output_path);
-                            }
-                            Err(e) => {
-                                tracing::error!(
-                                    "Failed to write transcription to {:?}: {}",
-                                    output_path,
-                                    e
-                                );
-                            }
-                        }
-
-                        *state = State::Idle;
-                        self.update_state("idle");
-                        return;
-                    }
-
-                    // Check for per-recording boolean overrides from CLI flags
-                    let auto_submit_override = read_bool_override("auto_submit");
-                    let shift_enter_override = read_bool_override("shift_enter");
-
-                    // Create output chain with potential mode override (for non-file modes)
-                    // Priority: 1. CLI override, 2. profile output_mode, 3. config default
-                    let mut output_config = match output_override {
-                        Some(OutputOverride::Mode(mode)) => {
-                            let mut config = self.config.output.clone();
-                            config.mode = mode;
-                            config
-                        }
-                        _ => {
-                            if let Some(mode) = profile_output_mode {
-                                let mut config = self.config.output.clone();
-                                config.mode = mode;
-                                config
-                            } else {
-                                self.config.output.clone()
-                            }
-                        }
-                    };
-
-                    // Apply per-recording boolean overrides
-                    if let Some(auto_submit) = auto_submit_override {
-                        output_config.auto_submit = auto_submit;
-                    }
-                    if let Some(shift_enter) = shift_enter_override {
-                        output_config.shift_enter_newlines = shift_enter;
-                    }
-
-                    // If smart auto-submit triggered, enable auto_submit for this cycle
-                    if smart_submit {
-                        output_config.auto_submit = true;
-                    }
-
-                    let output_chain = output::create_output_chain(&output_config);
-
-                    // Output the text
-                    *state = State::Outputting {
-                        text: final_text.clone(),
-                    };
-
-                    let output_options = output::OutputOptions {
-                        pre_output_command: output_config.pre_output_command.as_deref(),
-                        post_output_command: output_config.post_output_command.as_deref(),
-                    };
-
-                    if let Err(e) =
-                        output::output_with_fallback(&output_chain, &final_text, output_options)
-                            .await
-                    {
-                        tracing::error!("Output failed: {}", e);
-                    } else if self.config.output.notification.on_transcription {
-                        // Send notification on successful output
-                        output::send_transcription_notification(
-                            &final_text,
-                            self.config.output.notification.show_engine_icon,
-                            self.config.engine,
-                        )
-                        .await;
-                    }
-
-                    *state = State::Idle;
-                    self.update_state("idle");
+                    }));
                 }
             }
             Ok(Err(e)) => {
@@ -1605,6 +1494,161 @@ impl Daemon {
                 self.reset_to_idle(state).await;
             }
         }
+    }
+
+    pub async fn handle_post_process_result(
+        &self,
+        state: &mut State,
+        result: std::result::Result<String, tokio::task::JoinError>,
+    ) {
+        let final_text = match result {
+            Ok(text) => text,
+            Err(e) => {
+                if e.is_cancelled() {
+                    tracing::debug!("Post-processing task was cancelled");
+                } else {
+                    tracing::error!("Post-processing task panicked: {}", e);
+                }
+                self.reset_to_idle(state).await;
+                return;
+            }
+        };
+        let State::Transcribing {
+            profile_override,
+            smart_submit,
+            ..
+        } = state else {
+            panic!("Expected state to be Transcribing when handling post-process result");
+        };
+        let active_profile = profile_override
+            .as_ref()
+            .and_then(|name| self.config.get_profile(name));
+
+        // Check for output mode override from CLI flags
+        let output_override = read_output_mode_override();
+
+        // Check if profile specifies output mode override
+        let profile_output_mode = active_profile.and_then(|p| p.output_mode.clone());
+
+        // Determine file output path (if file mode)
+        // Priority: 1. CLI --file=path, 2. CLI --file (config path), 3. profile output_mode, 4. config mode=file
+        let file_output_path: Option<PathBuf> = match &output_override {
+            Some(OutputOverride::FileWithPath(path)) => {
+                // CLI --file=path.txt
+                Some(path.clone())
+            }
+            Some(OutputOverride::Mode(OutputMode::File)) => {
+                // CLI --file (no path) - use config's file_path
+                self.config.output.file_path.clone()
+            }
+            None if profile_output_mode == Some(OutputMode::File) => {
+                // Profile specifies file mode
+                self.config.output.file_path.clone()
+            }
+            None if self.config.output.mode == OutputMode::File => {
+                // Config mode = "file" (no CLI override)
+                self.config.output.file_path.clone()
+            }
+            _ => None,
+        };
+
+        if let Some(output_path) = file_output_path {
+            *state = State::Outputting {
+                text: final_text.clone(),
+            };
+
+            let file_mode = &self.config.output.file_mode;
+            match write_transcription_to_file(&output_path, &final_text, file_mode)
+                .await
+            {
+                Ok(()) => {
+                    let mode_str = match file_mode {
+                        FileMode::Overwrite => "wrote",
+                        FileMode::Append => "appended",
+                    };
+                    tracing::info!("{} transcription to {:?}", mode_str, output_path);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to write transcription to {:?}: {}",
+                        output_path,
+                        e
+                    );
+                }
+            }
+
+            *state = State::Idle;
+            self.update_state("idle");
+            return;
+        }
+
+        // Check for per-recording boolean overrides from CLI flags
+        let auto_submit_override = read_bool_override("auto_submit");
+        let shift_enter_override = read_bool_override("shift_enter");
+
+        // Create output chain with potential mode override (for non-file modes)
+        // Priority: 1. CLI override, 2. profile output_mode, 3. config default
+        let mut output_config = match output_override {
+            Some(OutputOverride::Mode(mode)) => {
+                let mut config = self.config.output.clone();
+                config.mode = mode;
+                config
+            }
+            _ => {
+                if let Some(mode) = profile_output_mode {
+                    let mut config = self.config.output.clone();
+                    config.mode = mode;
+                    config
+                } else {
+                    self.config.output.clone()
+                }
+            }
+        };
+
+        // Apply per-recording boolean overrides
+        if let Some(auto_submit) = auto_submit_override {
+            output_config.auto_submit = auto_submit;
+        }
+        if let Some(shift_enter) = shift_enter_override {
+            output_config.shift_enter_newlines = shift_enter;
+        }
+        if *smart_submit {
+            tracing::debug!(
+                "Smart auto-submit: final text after post-processing: {:?}",
+                final_text
+            );
+            output_config.auto_submit = true;
+        }
+
+        let output_chain = output::create_output_chain(&output_config);
+
+        // Output the text
+        *state = State::Outputting {
+            text: final_text.clone(),
+        };
+
+        let output_options = output::OutputOptions {
+            pre_output_command: output_config.pre_output_command.as_deref(),
+            post_output_command: output_config.post_output_command.as_deref(),
+        };
+
+        if let Err(e) =
+            output::output_with_fallback(&output_chain, &final_text, output_options)
+                .await
+        {
+            tracing::error!("Output failed: {}", e);
+        } else if self.config.output.notification.on_transcription {
+            // Send notification on successful output
+            output::send_transcription_notification(
+                &final_text,
+                self.config.output.notification.show_engine_icon,
+                self.config.engine,
+            )
+            .await;
+        }
+
+        *state = State::Idle;
+        self.update_state("idle");
     }
 
     pub async fn read_edit_content(&self, override_source: Option<Option<String>>) -> Result<String> {
@@ -2007,8 +2051,10 @@ impl Daemon {
                                         audio: Vec::new(),
                                         use_complex_post_process,
                                         edit_content,
+                                        smart_submit: false,
+                                        profile_override: None,
                                     };
-                                    self.handle_transcription_result(&mut state, Ok(Ok(text))).await;
+                                    self.start_post_process_transcription_result(&mut state, Ok(Ok(text))).await;
                                 } else {
                                     tracing::debug!("Eager recording produced empty result");
                                     self.reset_to_idle(&mut state).await;
@@ -2141,7 +2187,7 @@ impl Daemon {
                                         self.play_feedback(SoundEvent::Error);
                                     }
                                 }
-                            } else if let State::Recording { model_override: current_model_override, edit_content, .. } = &state {
+                            } else if let State::Recording { model_override: current_model_override, .. } = &state {
                                 let transcriber = match self.get_transcriber_for_recording(
                                     current_model_override.as_deref(),
                                     &transcriber_preloaded,
@@ -2204,8 +2250,10 @@ impl Daemon {
                                         audio: Vec::new(),
                                         use_complex_post_process,
                                         edit_content,
+                                        smart_submit: false,
+                                        profile_override: None,
                                     };
-                                    self.handle_transcription_result(&mut state, Ok(Ok(text))).await;
+                                    self.start_post_process_transcription_result(&mut state, Ok(Ok(text))).await;
                                 } else {
                                     tracing::debug!("Eager recording produced empty result");
                                     self.reset_to_idle(&mut state).await;
@@ -2260,6 +2308,10 @@ impl Daemon {
 
                                 // Abort the transcription task
                                 if let Some(task) = self.transcription_task.take() {
+                                    task.abort();
+                                }
+                                // Abort the post-processing task if it's running
+                                if let Some(task) = self.post_process_task.take() {
                                     task.abort();
                                 }
 
@@ -2443,8 +2495,14 @@ impl Daemon {
                                     self.update_state("transcribing");
 
                                     if let Some(text) = self.finish_eager_recording(&mut state, transcriber).await {
-                                        state = State::Transcribing { audio: Vec::new() };
-                                        self.handle_transcription_result(&mut state, Ok(Ok(text))).await;
+                                        state = State::Transcribing {
+                                            audio: Vec::new(),
+                                            use_complex_post_process,
+                                            edit_content,
+                                            smart_submit: false,
+                                            profile_override: None,
+                                        };
+                                        self.start_post_process_transcription_result(&mut state, Ok(Ok(text))).await;
                                     } else {
                                         tracing::debug!("Eager recording timeout produced empty result");
                                         self.reset_to_idle(&mut state).await;
@@ -2649,8 +2707,10 @@ impl Daemon {
                                 audio: Vec::new(),
                                 use_complex_post_process,
                                 edit_content,
+                                smart_submit: false,
+                                profile_override: None,
                             };
-                            self.handle_transcription_result(&mut state, Ok(Ok(text))).await;
+                            self.start_post_process_transcription_result(&mut state, Ok(Ok(text))).await;
                         } else {
                             tracing::debug!("Eager recording produced empty result");
                             self.reset_to_idle(&mut state).await;
@@ -2666,7 +2726,18 @@ impl Daemon {
                     }
                 }, if self.transcription_task.is_some() => {
                     self.transcription_task = None;
-                    self.handle_transcription_result(&mut state, result).await;
+                    self.start_post_process_transcription_result(&mut state, result).await;
+                }
+
+                // Handle post process task completion
+                result = async {
+                    match self.post_process_task.as_mut() {
+                        Some(task) => task.await,
+                        None => std::future::pending().await,
+                    }
+                }, if self.post_process_task.is_some() => {
+                    self.post_process_task = None;
+                    self.handle_post_process_result(&mut state, result).await;
                 }
 
                 // Check for cancel during transcription
@@ -2676,6 +2747,10 @@ impl Daemon {
 
                         // Abort the transcription task
                         if let Some(task) = self.transcription_task.take() {
+                            task.abort();
+                        }
+                        // Abort the post-processing task if it's running
+                        if let Some(task) = self.post_process_task.take() {
                             task.abort();
                         }
 
@@ -2936,6 +3011,10 @@ impl Daemon {
 
         // Abort any pending transcription task
         if let Some(task) = self.transcription_task.take() {
+            task.abort();
+        }
+        // Abort any pending post-processing task
+        if let Some(task) = self.post_process_task.take() {
             task.abort();
         }
 
