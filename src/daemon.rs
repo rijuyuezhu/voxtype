@@ -1584,6 +1584,26 @@ impl Daemon {
     pub async fn run(&mut self) -> Result<()> {
         tracing::info!("Starting voxtype daemon");
 
+        // Check if another instance is already running (single-instance safeguard)
+        let lock_path = Config::runtime_dir().join("voxtype.lock");
+        let lock_path_str = lock_path.to_string_lossy().to_string();
+        let mut pidlock = Pidlock::new(&lock_path_str);
+
+        match pidlock.acquire() {
+            Ok(_) => {
+                tracing::debug!("Acquired PID lock at {:?}", lock_path);
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to acquire lock: another voxtype instance is already running"
+                );
+                return Err(crate::error::VoxtypeError::Config(format!(
+                    "Another voxtype instance is already running (lock error: {:?})",
+                    e
+                )));
+            }
+        }
+
         // Clean up any stale cancel file from previous runs
         cleanup_cancel_file();
 
@@ -1612,25 +1632,6 @@ impl Daemon {
             crate::error::VoxtypeError::Config(format!("Failed to create directories: {}", e))
         })?;
 
-        // Check if another instance is already running (single-instance safeguard)
-        let lock_path = Config::runtime_dir().join("voxtype.lock");
-        let lock_path_str = lock_path.to_string_lossy().to_string();
-        let mut pidlock = Pidlock::new(&lock_path_str);
-
-        match pidlock.acquire() {
-            Ok(_) => {
-                tracing::debug!("Acquired PID lock at {:?}", lock_path);
-            }
-            Err(e) => {
-                tracing::error!(
-                    "Failed to acquire lock: another voxtype instance is already running"
-                );
-                return Err(crate::error::VoxtypeError::Config(format!(
-                    "Another voxtype instance is already running (lock error: {:?})",
-                    e
-                )));
-            }
-        }
 
         tracing::info!("Output mode: {:?}", self.config.output.mode);
 
