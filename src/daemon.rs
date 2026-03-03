@@ -2698,15 +2698,15 @@ impl Daemon {
                 }
 
                 // Clean up stale cancel file when idle and evict idle models
-                _ = tokio::time::sleep(Duration::from_millis(500)), if matches!(state, State::Idle) => {
+                _ = tokio::time::sleep(Duration::from_millis(100)), if matches!(state, State::Idle) => {
                     // Silently consume any stale cancel request
                     let _ = check_cancel_requested();
 
                     // Periodically evict idle models (every ~60s when idle)
-                    // The check interval is 500ms, so we use a counter to approximate 60s
+                    // The check interval is 100ms, so we use a counter to approximate 60s
                     static EVICTION_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
                     let count = EVICTION_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if count.is_multiple_of(120) {  // 500ms * 120 = 60s
+                    if count.is_multiple_of(600) {  // 100ms * 600 = 60s
                         if let Some(ref mut mm) = self.model_manager {
                             mm.evict_idle_models();
                         }
