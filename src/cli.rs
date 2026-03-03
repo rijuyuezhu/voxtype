@@ -471,6 +471,9 @@ pub enum RecordAction {
         #[arg(long)]
         edit_input_file: Option<String>,
 
+        /// Wait until the daemon is idle before start recording
+        #[arg(long)]
+        wait_till_idle: bool,
     },
     /// Stop recording and transcribe (send SIGUSR2 to daemon)
     Stop {
@@ -554,10 +557,6 @@ pub enum RecordAction {
         /// If not specified, use daemon config
         #[arg(long)]
         edit_input_file: Option<String>,
-
-        /// Wait until the daemon is idle before exiting (only applies when toggling from recording to idle)
-        #[arg(long)]
-        wait_till_idle: bool,
     },
     /// Cancel current recording or transcription (discard without output)
     Cancel,
@@ -757,9 +756,10 @@ impl RecordAction {
 
     pub fn wait_till_idle(&self) -> bool {
         match self {
-            RecordAction::Toggle { wait_till_idle, .. } => *wait_till_idle,
+            RecordAction::Start { wait_till_idle, .. } => *wait_till_idle,
             RecordAction::Stop { wait_till_idle, .. } => *wait_till_idle,
-            RecordAction::Start { .. } | RecordAction::Cancel => false,
+            RecordAction::Toggle { .. } => false,
+            RecordAction::Cancel => false,
         }
     }
 
