@@ -35,6 +35,8 @@ pub struct EvdevListener {
     secondary_model: Option<String>,
     /// Optional complex post-processing modifier key (when held, enable complex post-processing command)
     complex_post_process_modifier: Option<Key>,
+    /// File path for hotkey detection toggle
+    hotkey_detection_file: Option<String>,
     /// Signal to stop the listener task
     stop_signal: Option<oneshot::Sender<()>>,
 }
@@ -76,6 +78,8 @@ impl EvdevListener {
             .map(|k| parse_key_name(k))
             .transpose()?;
 
+        let hotkey_detection_file = config.hotkey_detection_file.clone();
+
         // Verify we can access /dev/input (permission check)
         std::fs::read_dir("/dev/input")
             .map_err(|e| HotkeyError::DeviceAccess(format!("/dev/input: {}", e)))?;
@@ -88,6 +92,7 @@ impl EvdevListener {
             model_modifier,
             secondary_model: None, // Set later via set_secondary_model
             complex_post_process_modifier,
+            hotkey_detection_file,
             stop_signal: None,
         })
     }
@@ -112,6 +117,7 @@ impl HotkeyListener for EvdevListener {
         let model_modifier = self.model_modifier;
         let secondary_model = self.secondary_model.clone();
         let complex_post_process_modifier = self.complex_post_process_modifier;
+        let hotkey_detection_file = self.hotkey_detection_file.clone();
 
         // Spawn the listener task
         tokio::task::spawn_blocking(move || {
@@ -123,6 +129,7 @@ impl HotkeyListener for EvdevListener {
                 model_modifier,
                 secondary_model,
                 complex_post_process_modifier,
+                hotkey_detection_file,
                 tx,
                 stop_rx,
             ) {
@@ -381,6 +388,22 @@ impl DeviceManager {
     }
 }
 
+fn read_hotkey_detection_file(path: Option<&String>) -> bool {
+    match path {
+        Some(p) => {
+            match std::fs::read_to_string(p)
+                .unwrap_or_else(|_| "1".to_string())
+                .to_lowercase()
+                .trim()
+            {
+                "1" | "true" | "enable" | "enabled" => true,
+                _ => false,
+            }
+        }
+        None => true, // Default to enabled if no file configured
+    }
+}
+
 /// Main listener loop running in a blocking task
 fn evdev_listener_loop(
     target_key: Key,
@@ -390,6 +413,7 @@ fn evdev_listener_loop(
     model_modifier: Option<Key>,
     secondary_model: Option<String>,
     complex_post_process_modifier: Option<Key>,
+    hotkey_detection_file: Option<String>,
     tx: mpsc::Sender<HotkeyEvent>,
     mut stop_rx: oneshot::Receiver<()>,
 ) -> Result<(), HotkeyError> {
@@ -437,9 +461,13 @@ fn evdev_listener_loop(
     }
 
     if let Some(ppm) = complex_post_process_modifier {
+        tracing::info!("Complex post-process modifier configured: {:?}", ppm);
+    }
+
+    if let Some(ref hotkey_detection_file) = hotkey_detection_file {
         tracing::info!(
-            "Complex post-process modifier configured: {:?}",
-            ppm
+            "Hotkey detection toggle file configured: {:?}",
+            hotkey_detection_file
         );
     }
 
@@ -483,6 +511,18 @@ fn evdev_listener_loop(
             if let Err(e) = manager.enumerate_devices() {
                 tracing::debug!("Enumeration failed: {}", e);
             }
+            continue;
+        }
+
+        let hotkey_detection_enabled = read_hotkey_detection_file(hotkey_detection_file.as_ref());
+
+        if !hotkey_detection_enabled {
+            active_modifiers.clear();
+            model_modifier_held = false;
+            complex_post_process_modifier_held = false;
+            is_pressed = false;
+            // poll events to clear out any pending input and avoid processing them when detection is re-enabled
+            manager.poll_events();
             continue;
         }
 

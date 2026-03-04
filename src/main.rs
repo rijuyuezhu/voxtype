@@ -165,6 +165,9 @@ async fn main() -> anyhow::Result<()> {
             config.hotkey.edit_input_file = Some(edit_input_file);
         }
     }
+    if let Some(hotkey_detection_file) = cli.hotkey_detection_file {
+        config.hotkey.hotkey_detection_file = Some(hotkey_detection_file);
+    }
     if let Some(cancel_key) = cli.cancel_key {
         config.hotkey.cancel_key = Some(cancel_key);
     }
