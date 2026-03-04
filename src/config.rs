@@ -395,6 +395,12 @@ pub struct HotkeyConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
 
+    /// Optional file path for hotkey detection toggle
+    /// if 0 in this file, disables hotkey detection
+    /// if not set, hotkey detection is enabled (default)
+    #[serde(default)]
+    pub hotkey_detection_file: Option<String>,
+
     /// Optional cancel key (evdev KEY_* constant name, without KEY_ prefix)
     /// When pressed, cancels the current recording or transcription
     /// Examples: "ESC", "BACKSPACE", "F12"
@@ -1764,6 +1770,7 @@ impl Default for Config {
                 modifiers: vec![],
                 mode: ActivationMode::default(),
                 enabled: true,
+                hotkey_detection_file: None,
                 cancel_key: None,
                 model_modifier: None,
                 complex_post_process_modifier: None,

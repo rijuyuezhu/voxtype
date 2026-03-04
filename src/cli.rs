@@ -81,7 +81,7 @@ pub struct Cli {
     pub edit_key: Option<String>,
 
     /// The file used in edit mode. To use clipboard, set --edit-input-file clipboard
-    #[arg(long, value_name = "FILE")]
+    #[arg(long, value_name = "FILE", help_heading = "Hotkey")]
     pub edit_input_file: Option<String>,
 
     /// Use toggle mode (press to start/stop) instead of push-to-talk (hold to record)
@@ -91,6 +91,10 @@ pub struct Cli {
     /// Disable built-in hotkey detection (use compositor keybindings instead)
     #[arg(long, help_heading = "Hotkey")]
     pub no_hotkey: bool,
+
+    /// Optional file path for hotkey detection toggle. If set and 0 in this file, disables hotkey detection. If not set, hotkey detection is enabled by default.
+    #[arg(long, value_name = "FILE", help_heading = "Hotkey")]
+    pub hotkey_detection_file: Option<String>,
 
     /// Cancel key for aborting recording or transcription (e.g., ESC, BACKSPACE, F12)
     #[arg(long, value_name = "KEY", help_heading = "Hotkey")]
