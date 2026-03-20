@@ -1622,6 +1622,9 @@ impl Daemon {
         self.update_state("idle");
 
         // Main event loop
+        // Cached transcriber for eager chunk processing during recording
+        let mut eager_transcriber: Option<Arc<dyn Transcriber>> = None;
+
         loop {
             tokio::select! {
                 // Handle hotkey events (only if hotkey listener is enabled)
@@ -2087,11 +2090,26 @@ impl Daemon {
                             task.abort();
                         }
 
+                        if let State::EagerRecording {
+                            accumulated_audio,
+                            chunk_results,
+                            chunks_sent,
+                            tasks_in_flight,
+                            ..
+                        } = &mut state
+                        {
+                            accumulated_audio.clear();
+                            chunk_results.clear();
+                            *chunks_sent = 0;
+                            *tasks_in_flight = 0;
+                        }
+
                         cleanup_output_mode_override();
                         cleanup_model_override();
                         cleanup_profile_override();
                         cleanup_bool_override("smart_auto_submit");
                         state = State::Idle;
+                        eager_transcriber = None;
                         self.update_state("idle");
                         self.play_feedback(SoundEvent::Cancelled);
 
@@ -2109,6 +2127,61 @@ impl Daemon {
                         continue;
                     }
 
+                    // Populate eager transcriber cache on first poll
+                    if eager_transcriber.is_none() && state.is_eager_recording() {
+                        let model_override = match &state {
+                            State::EagerRecording { model_override, .. } => model_override.as_deref(),
+                            _ => None,
+                        };
+                        eager_transcriber = transcriber_preloaded.clone();
+                        if eager_transcriber.is_none() {
+                            // Whisper engine: get from model manager
+                            if let Some(ref mut mm) = self.model_manager {
+                                match mm.get_prepared_transcriber(model_override) {
+                                    Ok(t) => {
+                                        tracing::debug!("Created eager transcriber for chunk dispatch");
+                                        eager_transcriber = Some(t);
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to create eager transcriber: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if let State::EagerRecording {
+                        accumulated_audio,
+                        chunks_sent,
+                        chunk_results,
+                        tasks_in_flight,
+                        ..
+                    } = &mut state
+                    {
+                        if let Some(ref mut capture) = audio_capture {
+                            let new_samples = capture.get_samples().await;
+                            if !new_samples.is_empty() {
+                                accumulated_audio.extend(new_samples);
+                            }
+                        }
+
+                        if let Some(ref transcriber) = eager_transcriber {
+                            let transcriber = transcriber.clone();
+                            self.process_eager_chunks(
+                                accumulated_audio,
+                                chunks_sent,
+                                tasks_in_flight,
+                                &transcriber,
+                            );
+                        }
+
+                        let completed = self.poll_chunk_tasks().await;
+                        if !completed.is_empty() {
+                            *tasks_in_flight = tasks_in_flight.saturating_sub(completed.len());
+                            chunk_results.extend(completed);
+                        }
+                    }
+
                     // Check for recording timeout
                     if let Some(duration) = state.recording_duration() {
                         if duration > max_duration {
@@ -2116,11 +2189,6 @@ impl Daemon {
                                 "Recording timeout ({:.0}s limit), transcribing captured audio",
                                 max_duration.as_secs_f32()
                             );
-
-                            // Cancel any pending eager chunk tasks
-                            for (_, task) in self.eager_chunk_tasks.drain(..) {
-                                task.abort();
-                            }
 
                             cleanup_output_mode_override();
                             cleanup_model_override();
@@ -2147,12 +2215,37 @@ impl Daemon {
                                 }
                             };
 
-                            // Transcribe the captured audio
-                            self.start_transcription_task(
-                                &mut state,
-                                &mut audio_capture,
-                                transcriber,
-                            ).await;
+                            if state.is_eager_recording() {
+                                if let Some(mut capture) = audio_capture.take() {
+                                    if let Ok(final_samples) = capture.stop().await {
+                                        if let State::EagerRecording { accumulated_audio, .. } = &mut state {
+                                            accumulated_audio.extend(final_samples);
+                                        }
+                                    }
+                                }
+
+                                if let Some(transcriber) = transcriber {
+                                    self.update_state("transcribing");
+
+                                    if let Some(text) = self.finish_eager_recording(&mut state, transcriber).await {
+                                        state = State::Transcribing { audio: Vec::new() };
+                                        self.handle_transcription_result(&mut state, Ok(Ok(text))).await;
+                                    } else {
+                                        tracing::debug!("Eager recording timeout produced empty result");
+                                        self.reset_to_idle(&mut state).await;
+                                    }
+                                }
+                            } else {
+                                for (_, task) in self.eager_chunk_tasks.drain(..) {
+                                    task.abort();
+                                }
+
+                                self.start_transcription_task(
+                                    &mut state,
+                                    &mut audio_capture,
+                                    transcriber,
+                                ).await;
+                            }
                         }
                     }
                 }
