@@ -2495,6 +2495,15 @@ impl Daemon {
                             };
 
                             if state.is_eager_recording() {
+                                let (use_complex_post_process, edit_content) = match &state {
+                                    State::EagerRecording {
+                                        use_complex_post_process,
+                                        edit_content,
+                                        ..
+                                    } => (*use_complex_post_process, edit_content.clone()),
+                                    _ => (false, None),
+                                };
+
                                 if let Some(mut capture) = audio_capture.take() {
                                     if let Ok(final_samples) = capture.stop().await {
                                         if let State::EagerRecording { accumulated_audio, .. } = &mut state {
